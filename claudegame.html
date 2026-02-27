@@ -1,0 +1,2783 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Maze Duel – BO3 Match</title>
+<script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+<style>
+/* ===================== RESET & BASE ===================== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0a0a1a; --panel: #12122a; --border: #2a2a5a; --accent: #f0c040;
+  --btn: #2050c0; --btn-h: #3070e0; --danger: #c03030; --success: #30a050;
+  --text: #e8e8ff; --sub: #9090b8; --font: 'Segoe UI', system-ui, sans-serif;
+}
+html, body { width:100%; height:100%; background:var(--bg); color:var(--text); font-family:var(--font); overflow:hidden; }
+body { display:flex; flex-direction:column; align-items:center; justify-content:center; }
+
+/* ===================== SCREENS ===================== */
+.screen { display:none; flex-direction:column; align-items:center; width:100%; max-width:600px; padding:16px; gap:12px; }
+.screen.active { display:flex; }
+h1 { font-size:2rem; color:var(--accent); text-shadow:0 0 20px #f0c04088; letter-spacing:2px; }
+h2 { font-size:1.3rem; color:var(--accent); }
+h3 { font-size:1rem; color:var(--sub); font-weight:400; }
+
+/* ===================== PANEL ===================== */
+.panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px; width:100%; }
+.row { display:flex; gap:8px; align-items:center; width:100%; flex-wrap:wrap; }
+.row.center { justify-content:center; }
+label { font-size:.85rem; color:var(--sub); white-space:nowrap; }
+
+/* ===================== INPUTS ===================== */
+input[type=text] {
+  background:#1a1a36; border:1px solid var(--border); border-radius:8px;
+  color:var(--text); padding:8px 12px; font-size:1rem; outline:none;
+  transition:border-color .2s;
+}
+input[type=text]:focus { border-color:var(--accent); }
+input.short { width:90px; }
+input.wide { flex:1; min-width:0; }
+
+/* ===================== BUTTONS ===================== */
+button {
+  background:var(--btn); border:none; border-radius:8px; color:#fff;
+  padding:9px 18px; font-size:.95rem; cursor:pointer; transition:background .15s, transform .1s;
+  white-space:nowrap; font-family:var(--font);
+}
+button:hover { background:var(--btn-h); }
+button:active { transform:scale(.96); }
+button.accent { background:#b08000; color:#fff; }
+button.accent:hover { background:var(--accent); color:#000; }
+button.danger { background:var(--danger); }
+button.danger:hover { background:#e04040; }
+button.success { background:var(--success); }
+button.success:hover { background:#40c060; }
+button.big { padding:12px 28px; font-size:1.1rem; font-weight:600; }
+button:disabled { background:#333; color:#666; cursor:not-allowed; transform:none; }
+
+/* ===================== STATUS ===================== */
+#mqtt-status { font-size:.8rem; padding:4px 10px; border-radius:20px; background:#1a1a36; border:1px solid var(--border); }
+#mqtt-status.ok { border-color:var(--success); color:var(--success); }
+#mqtt-status.err { border-color:var(--danger); color:var(--danger); }
+#mqtt-status.conn { border-color:#aaa; color:#aaa; }
+
+/* ===================== ROOM LIST ===================== */
+#room-players { list-style:none; width:100%; }
+#room-players li {
+  background:#1a1a36; border-radius:8px; padding:8px 12px; margin-bottom:6px;
+  display:flex; align-items:center; gap:10px; font-size:.95rem;
+}
+.tag { font-size:.7rem; padding:2px 7px; border-radius:20px; font-weight:700; }
+.tag.host { background:#b08000; color:#fff; }
+.tag.you { background:#204080; color:#9cf; }
+.dot { width:12px; height:12px; border-radius:50%; flex-shrink:0; }
+
+/* ===================== DIFFICULTY ===================== */
+.diff-cards { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; width:100%; }
+.diff-card {
+  flex:1; min-width:120px; max-width:160px; background:#1a1a36; border:2px solid var(--border);
+  border-radius:12px; padding:18px 10px; text-align:center; cursor:pointer; transition:all .2s;
+}
+.diff-card:hover, .diff-card.selected { border-color:var(--accent); background:#22224a; }
+.diff-card .icon { font-size:2rem; margin-bottom:6px; }
+.diff-card .name { font-weight:600; font-size:1rem; }
+.diff-card .desc { font-size:.75rem; color:var(--sub); margin-top:4px; }
+
+/* ===================== COUNTDOWN ===================== */
+#countdown-num { font-size:6rem; color:var(--accent); text-shadow:0 0 40px #f0c04099; animation:pulse 1s infinite; }
+@keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.15)} }
+.round-info { font-size:1.4rem; font-weight:700; }
+
+/* ===================== GAME WRAP ===================== */
+#game-screen { padding:0; max-width:none; width:100%; height:100%; justify-content:flex-start; }
+#canvas-wrap { position:relative; flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; width:100%; }
+#cvs { display:block; image-rendering:pixelated; border:2px solid var(--border); }
+
+/* ===================== HUD ===================== */
+#hud {
+  width:100%; background:#0d0d22; border-top:1px solid var(--border);
+  padding:6px 12px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; flex-shrink:0;
+}
+.hud-item { display:flex; align-items:center; gap:6px; font-size:.85rem; }
+.score-box { display:flex; gap:10px; }
+.p-score { display:flex; align-items:center; gap:5px; font-size:.82rem; font-weight:600; }
+.p-score .dot { width:10px; height:10px; }
+#hud-goal { flex:1; text-align:right; font-size:.78rem; color:var(--accent); font-weight:700; }
+
+/* ===================== TOUCH CONTROLS ===================== */
+#touch-ctrl {
+  display:none; position:absolute; bottom:10px; right:10px; z-index:10;
+  display:grid; grid-template-columns:40px 40px 40px; gap:4px;
+}
+#touch-ctrl button {
+  width:40px; height:40px; padding:0; font-size:1.2rem; background:#ffffff22;
+  border:1px solid #ffffff44; border-radius:8px; color:#fff;
+}
+#touch-ctrl button:hover { background:#ffffff44; }
+
+/* ===================== DEBUG PANEL ===================== */
+#debug-panel {
+  display:none; position:fixed; top:10px; right:10px; background:#000c; border:1px solid #0f8;
+  border-radius:8px; padding:10px; font-size:.72rem; color:#0f8; font-family:monospace;
+  z-index:999; min-width:200px; max-height:80vh; overflow-y:auto; pointer-events:none;
+}
+#debug-panel.show { display:block; }
+
+/* ===================== MODAL (QUIZ) ===================== */
+#modal-overlay {
+  display:none; position:fixed; inset:0; background:#000a; z-index:800;
+  align-items:center; justify-content:center;
+}
+#modal-overlay.show { display:flex; }
+#modal-box {
+  background:var(--panel); border:2px solid var(--accent); border-radius:16px;
+  padding:24px; max-width:420px; width:90%; position:relative;
+}
+#modal-box h3 { color:var(--accent); margin-bottom:12px; font-size:1.1rem; }
+.quiz-opts { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+.quiz-opt {
+  background:#1a1a36; border:1px solid var(--border); border-radius:8px;
+  padding:10px 14px; cursor:pointer; transition:all .15s; font-size:.9rem;
+}
+.quiz-opt:hover { border-color:var(--accent); background:#22224a; }
+.quiz-opt.correct { border-color:var(--success); background:#103020; color:var(--success); }
+.quiz-opt.wrong { border-color:var(--danger); background:#301020; color:var(--danger); }
+
+/* ===================== END SCREENS ===================== */
+#round-end-screen, #match-end-screen {
+  position:fixed; inset:0; background:#000c; z-index:700;
+  display:none; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+}
+#round-end-screen.show, #match-end-screen.show { display:flex; }
+.trophy { font-size:5rem; }
+.winner-name { font-size:1.8rem; color:var(--accent); font-weight:700; }
+
+/* ===================== HUD MSG ===================== */
+#hud-msg {
+  position:fixed; top:70px; left:50%; transform:translateX(-50%);
+  background:#000c; border:1px solid var(--accent); border-radius:8px;
+  padding:8px 20px; font-size:.9rem; font-weight:700; color:var(--accent);
+  z-index:600; pointer-events:none; opacity:0; transition:opacity .3s;
+}
+#hud-msg.show { opacity:1; }
+
+/* ===================== SCROLLBAR ===================== */
+::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:#2a2a5a; border-radius:2px; }
+
+/* ===================== RESPONSIVE ===================== */
+@media(max-width:480px) {
+  h1 { font-size:1.5rem; } button.big { padding:10px 20px; font-size:1rem; }
+  #hud { padding:4px 8px; gap:8px; } .hud-item { font-size:.75rem; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     LOBBY SCREEN
+     ============================================================ -->
+<div id="lobby-screen" class="screen active">
+  <h1>🏰 Maze Duel</h1>
+  <h3>BO3 Match — Chinh phục mê cung</h3>
+
+  <div class="panel">
+    <div class="row">
+      <label>Tên của bạn:</label>
+      <input id="inp-name" type="text" class="wide" maxlength="16" placeholder="Nhập tên (1-16 ký tự)" value="Player1">
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>🤖 Chơi với máy (Offline)</h2>
+    <div class="row" style="margin-top:10px;">
+      <button class="big success" onclick="startOfflineFlow()">▶ Bắt đầu</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+      <h2>🌐 Chơi Online</h2>
+      <span id="mqtt-status" class="conn">⚡ Đang kết nối...</span>
+    </div>
+    <div class="row" style="margin-bottom:10px;">
+      <button onclick="createRoom()">🏠 Tạo phòng</button>
+      <span style="color:var(--sub)">hoặc</span>
+      <input id="inp-room" type="text" class="short" maxlength="4" placeholder="Mã phòng" style="text-transform:uppercase">
+      <button onclick="joinRoom()">🚪 Vào phòng</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     ROOM WAIT SCREEN
+     ============================================================ -->
+<div id="room-screen" class="screen">
+  <h1>🏰 Phòng chờ</h1>
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;">
+      <div>Mã phòng: <strong id="room-code-lbl" style="color:var(--accent);font-size:1.4rem;letter-spacing:4px;">----</strong></div>
+      <span id="mqtt-status2" class="conn" style="font-size:.8rem;padding:3px 8px;border-radius:20px;background:#1a1a36;border:1px solid var(--border);">⚡ Kết nối</span>
+    </div>
+  </div>
+  <div class="panel">
+    <h2 style="margin-bottom:10px;">👥 Người chơi (<span id="room-count">0</span>/4)</h2>
+    <ul id="room-players"></ul>
+  </div>
+  <div class="row center">
+    <button id="btn-start-room" class="big success" onclick="hostStartGame()" style="display:none">🎮 Bắt đầu trận</button>
+    <button class="danger" onclick="leaveRoom()">🚪 Rời phòng</button>
+    <button onclick="location.reload()">🔄 Tải lại</button>
+  </div>
+  <div id="room-msg" style="font-size:.85rem;color:var(--sub);text-align:center;"></div>
+</div>
+
+<!-- ============================================================
+     DIFFICULTY SCREEN
+     ============================================================ -->
+<div id="diff-screen" class="screen">
+  <h1>⚙️ Chọn độ khó</h1>
+  <h3>CPU sẽ chơi với bạn</h3>
+  <div class="diff-cards">
+    <div class="diff-card" onclick="selectDiff('easy')">
+      <div class="icon">🐢</div>
+      <div class="name">Dễ</div>
+      <div class="desc">CPU chậm, quyết định đơn giản</div>
+    </div>
+    <div class="diff-card selected" onclick="selectDiff('normal')">
+      <div class="icon">⚔️</div>
+      <div class="name">Thường</div>
+      <div class="desc">Cân bằng, thỉnh thoảng A*</div>
+    </div>
+    <div class="diff-card" onclick="selectDiff('hard')">
+      <div class="icon">🔥</div>
+      <div class="name">Khó</div>
+      <div class="desc">A* tối ưu, phản ứng nhanh</div>
+    </div>
+  </div>
+  <div class="row center" style="margin-top:12px;">
+    <button class="big success" onclick="confirmDiff()">✅ Xác nhận</button>
+    <button onclick="showScreen('lobby-screen')">⬅ Quay lại</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     COUNTDOWN SCREEN
+     ============================================================ -->
+<div id="countdown-screen" class="screen">
+  <div class="round-info">VÁN <span id="cd-round">1</span> / 3</div>
+  <h3>🏅 Mục tiêu: Tìm kho báu và mang về base</h3>
+  <div id="countdown-num">5</div>
+  <h3 id="cd-sub">Chuẩn bị...</h3>
+</div>
+
+<!-- ============================================================
+     GAME SCREEN
+     ============================================================ -->
+<div id="game-screen" class="screen" style="flex-direction:column;">
+  <div id="canvas-wrap">
+    <canvas id="cvs"></canvas>
+    <div id="touch-ctrl">
+      <div></div>
+      <button ontouchstart="touchDir('up')"   ontouchend="touchRelease('up')"   onmousedown="touchDir('up')"   onmouseup="touchRelease('up')">▲</button>
+      <div></div>
+      <button ontouchstart="touchDir('left')" ontouchend="touchRelease('left')" onmousedown="touchDir('left')" onmouseup="touchRelease('left')">◀</button>
+      <button ontouchstart="touchDir('down')" ontouchend="touchRelease('down')" onmousedown="touchDir('down')" onmouseup="touchRelease('down')">▼</button>
+      <button ontouchstart="touchDir('right')"ontouchend="touchRelease('right')"onmousedown="touchDir('right')"onmouseup="touchRelease('right')">▶</button>
+    </div>
+  </div>
+  <div id="hud">
+    <div class="hud-item">🎮 Ván <span id="hud-round">1</span>/3</div>
+    <div class="score-box" id="score-box"></div>
+    <div class="hud-item">⏱ <span id="hud-timer">0</span>s</div>
+    <div id="hud-goal">🏆 TÌM KHO BÁU VÀNG</div>
+  </div>
+</div>
+
+<!-- ============================================================
+     ROUND END OVERLAY
+     ============================================================ -->
+<div id="round-end-screen">
+  <div class="trophy">🏅</div>
+  <div class="winner-name" id="round-winner-name">---</div>
+  <div style="color:var(--sub)">thắng ván này!</div>
+  <div id="round-scores" style="margin-top:12px;text-align:center;"></div>
+  <div style="color:var(--sub);font-size:.85rem" id="round-next-msg">Ván tiếp theo sau 3 giây...</div>
+</div>
+
+<!-- ============================================================
+     MATCH END OVERLAY
+     ============================================================ -->
+<div id="match-end-screen">
+  <div class="trophy">🏆</div>
+  <div style="font-size:1rem;color:var(--sub);">NHÀ VÔ ĐỊCH</div>
+  <div class="winner-name" id="match-winner-name">---</div>
+  <div id="match-scores" style="margin-top:12px;text-align:center;"></div>
+  <button class="big" onclick="backToLobby()" style="margin-top:16px;">🏠 Quay về sảnh</button>
+</div>
+
+<!-- ============================================================
+     QUIZ MODAL
+     ============================================================ -->
+<div id="modal-overlay">
+  <div id="modal-box">
+    <h3>❓ Câu hỏi</h3>
+    <p id="quiz-question" style="font-size:1rem;margin:8px 0;"></p>
+    <div class="quiz-opts" id="quiz-opts"></div>
+  </div>
+</div>
+
+<!-- ============================================================
+     HUD MESSAGE
+     ============================================================ -->
+<div id="hud-msg"></div>
+
+<!-- ============================================================
+     DEBUG PANEL
+     ============================================================ -->
+<div id="debug-panel">
+  <div style="color:#ff0;margin-bottom:6px;">🛠 DEBUG PANEL [TAB]</div>
+  <div id="dbg-fps">FPS: --</div>
+  <div id="dbg-ping">Ping: --</div>
+  <div id="dbg-mode">Mode: --</div>
+  <div id="dbg-players">Players: --</div>
+  <div id="dbg-traps">Traps: --</div>
+  <div id="dbg-round">Round: --</div>
+  <div id="dbg-seq">Seq: --</div>
+  <div style="margin-top:6px;border-top:1px solid #0f84;padding-top:6px;color:#0fc;">📊 GRAPH COLORING</div>
+  <div id="dbg-gc-colors">Màu: --</div>
+  <div id="dbg-gc-nodes">Nodes: --</div>
+  <div id="dbg-gc-density">Mật độ: --</div>
+  <div id="dbg-gc-danger">Nguy hiểm: --</div>
+  <div id="dbg-gc-quiz">Quiz cells: --</div>
+  <div id="dbg-gc-mons">Monster vùng: --</div>
+  <div style="margin-top:6px;border-top:1px solid #fa04;padding-top:6px;color:#fa8;">🧩 CSP SOLVER</div>
+  <div id="dbg-csp-status">Status: --</div>
+  <div id="dbg-csp-con">Constraints: --</div>
+  <div id="dbg-csp-log" style="max-height:100px;overflow-y:auto;font-size:.65rem;color:#adf;">Log: --</div>
+  <div id="dbg-csp-stats" style="color:#fa8;font-size:.65rem;">Stats: --</div>
+  <div id="dbg-csp-fairness" style="color:#8ff;font-size:.65rem;">Fairness: --</div>
+  <div style="margin-top:6px;color:#ff0;">[G] Bật/tắt overlay | [F12→console] mapQualityReport()</div>
+</div>
+
+<script>
+"use strict";
+/* ================================================================
+   CONFIG – tất cả hằng số game
+   ================================================================ */
+const CFG = {
+  W: 41, H: 25, TILE: 16,       // kích thước mê cung & ô
+  T_FLOOR: 0, T_WALL: 1, T_QUIZ: 2,
+  MAX_PLAYERS: 4,
+  MONSTER_MOVE_MS: 700,          // chu kỳ quái di chuyển
+  TRAP_LIMIT: 3,                 // số bẫy tối đa mỗi người
+  TRAP_TTL: 12000,               // thời gian sống của bẫy (ms)
+  STUN_MS: 2500,                 // thời gian bị stun
+  ROUND_END_DELAY: 3500,         // ms chờ sau khi thắng ván
+  BO3: 3,                        // số ván tối đa
+  MQTT_URL: 'wss://broker.emqx.io:8084/mqtt',
+  LOOP_ADD_RATIO: 0.12,          // tỉ lệ thêm vòng lặp vào maze
+  DEAD_END_PASSES: 2,            // số lần giảm ngõ cụt
+  CPU_EASY_MS: 900, CPU_NORMAL_MS: 550, CPU_HARD_MS: 280,
+  // màu sắc người chơi
+  PLAYER_COLORS: ['#4af', '#f66', '#6d6', '#d8d'],
+  PLAYER_BASES: [                // vị trí base theo idx
+    {x:1,y:1}, {x:39,y:1}, {x:1,y:23}, {x:39,y:23}
+  ],
+  QUIZ_POOL: [
+    { q:'2 + 2 = ?', opts:['3','4','5','6'], ans:1 },
+    { q:'Thủ đô Việt Nam là?', opts:['HCM','Đà Nẵng','Hà Nội','Huế'], ans:2 },
+    { q:'7 × 8 = ?', opts:['54','56','58','60'], ans:1 },
+    { q:'Nguyên tố H là?', opts:['Helium','Hidro','Hafni','Holmi'], ans:1 },
+    { q:'Số nguyên tố nhỏ nhất là?', opts:['0','1','2','3'], ans:2 },
+    { q:'100 / 4 = ?', opts:['20','25','30','40'], ans:1 },
+    { q:'Màu pha trộn đỏ + vàng = ?', opts:['Tím','Xanh','Cam','Hồng'], ans:2 },
+    { q:'π ≈ ?', opts:['3.14','3.41','2.71','1.61'], ans:0 },
+    { q:'Nước sôi ở °C?', opts:['90','95','100','105'], ans:2 },
+    { q:'Tốc độ ánh sáng ≈ km/s?', opts:['100k','300k','500k','1000k'], ans:1 },
+    { q:'12 × 12 = ?', opts:['124','132','144','148'], ans:2 },
+    { q:'Việt Nam có bao nhiêu tỉnh/thành?', opts:['58','61','63','65'], ans:2 },
+    { q:'Hóa học: O2 là chất gì?', opts:['Héli','Hidro','Oxy','Nitơ'], ans:2 },
+    { q:'Cây quang hợp hấp thụ khí gì?', opts:['O2','CO2','N2','H2'], ans:1 },
+    { q:'1 km = ? m', opts:['10','100','1000','10000'], ans:2 },
+    { q:'Thành phố nào lớn nhất Việt Nam?', opts:['Hà Nội','Đà Nẵng','Hải Phòng','TP.HCM'], ans:3 },
+    { q:'3³ = ?', opts:['6','9','27','81'], ans:2 },
+    { q:'Nước có công thức hóa học là?', opts:['CO2','H2O','NaCl','O2'], ans:1 },
+    { q:'Trái Đất quay quanh Mặt Trời hết bao nhiêu ngày?', opts:['30','180','365','720'], ans:2 },
+    { q:'1 giờ = ? phút', opts:['30','50','60','90'], ans:2 },
+    { q:'Mặt Trăng cách Trái Đất khoảng bao nhiêu km?', opts:['38 nghìn','384 nghìn','3,8 triệu','38 triệu'], ans:1 },
+    { q:'Các màu của cầu vồng có bao nhiêu màu?', opts:['5','6','7','8'], ans:2 },
+    { q:'Số ngày trong năm nhuận?', opts:['364','365','366','367'], ans:2 },
+    { q:'Tổng các góc trong tam giác bằng?', opts:['90°','180°','270°','360°'], ans:1 },
+    { q:'Ai là tác giả Truyện Kiều?', opts:['Nguyễn Du','Nguyễn Trãi','Hoàng Lê Nhất Thống Chí','Lê Lợi'], ans:0 },
+    { q:'Phương trình bậc 1: 2x = 10, x = ?', opts:['2','4','5','8'], ans:2 },
+    { q:'Kim loại nhẹ nhất là?', opts:['Sắt','Nhôm','Liti','Natri'], ans:2 },
+    { q:'1 tấn = ? kg', opts:['100','500','1000','2000'], ans:2 },
+    { q:'Con sông dài nhất thế giới?', opts:['Amazon','Nile','Yangtze','Mississippi'], ans:1 },
+    { q:'Năm nào nước ta thống nhất?', opts:['1954','1968','1975','1986'], ans:2 },
+  ]
+};
+
+/* ================================================================
+   HELPERS – tiện ích
+   ================================================================ */
+// Sanitize để tránh XSS
+function sanitize(s) {
+  return String(s).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// Random int [min, max)
+function ri(min, max) { return Math.floor(Math.random() * (max - min)) + min; }
+// Sinh mã phòng 4 ký tự
+function genCode() { return Math.random().toString(36).substring(2,6).toUpperCase(); }
+// Shuffle mảng
+function shuffle(arr) { for(let i=arr.length-1;i>0;i--){const j=ri(0,i+1);[arr[i],arr[j]]=[arr[j],arr[i]];} return arr; }
+// Deep clone
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+// Lerp
+function lerp(a,b,t) { return a + (b-a)*t; }
+// Timer display
+function fmtTime(ms) { return (ms/1000).toFixed(1); }
+// Hàm tạo seed PRNG đơn giản (mulberry32)
+function mkRng(seed) {
+  let s = seed >>> 0;
+  return function() {
+    s += 0x6D2B79F5;
+    let t = s;
+    t = Math.imul(t ^ t>>>15, t | 1);
+    t ^= t + Math.imul(t ^ t>>>7, t | 61);
+    return ((t ^ t>>>14) >>> 0) / 4294967296;
+  };
+}
+// Lấy hàng xóm (4 hướng)
+function neighbors4(x,y,w,h) {
+  const r=[];
+  if(x>0) r.push({x:x-1,y});
+  if(x<w-1) r.push({x:x+1,y});
+  if(y>0) r.push({x,y:y-1});
+  if(y<h-1) r.push({x,y:y+1});
+  return r;
+}
+// Hiển thị HUD message
+let hudMsgTimer = null;
+function showHudMsg(txt, ms=2000) {
+  const el = document.getElementById('hud-msg');
+  if(!el) return;
+  el.textContent = txt;
+  el.classList.add('show');
+  if(hudMsgTimer) clearTimeout(hudMsgTimer);
+  hudMsgTimer = setTimeout(()=>el.classList.remove('show'), ms);
+}
+// Chuyển màn hình
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  const el = document.getElementById(id);
+  if(el) el.classList.add('active');
+}
+// Lấy tên người chơi đã sanitize
+function getPlayerName() {
+  const v = (document.getElementById('inp-name').value || '').trim();
+  if(!v) return 'Player';
+  return sanitize(v.substring(0,16));
+}
+// BFS tìm đường ngắn nhất trên maze
+function bfs(grid, sx,sy, tx,ty, W,H) {
+  if(sx===tx && sy===ty) return [];
+  const visited = new Uint8Array(W*H);
+  const prev = new Int32Array(W*H).fill(-1);
+  const q = [sy*W+sx];
+  visited[sy*W+sx] = 1;
+  const dx=[1,-1,0,0], dy=[0,0,1,-1];
+  while(q.length) {
+    const cur = q.shift();
+    const cx=cur%W, cy=Math.floor(cur/W);
+    if(cx===tx && cy===ty) {
+      // reconstruct
+      const path=[];
+      let node = ty*W+tx;
+      while(node !== sy*W+sx) {
+        const p=prev[node];
+        const px=p%W, py=Math.floor(p/W);
+        const nx=node%W, ny=Math.floor(node/W);
+        path.unshift({dx:nx-px, dy:ny-py});
+        node=p;
+      }
+      return path;
+    }
+    for(let d=0;d<4;d++){
+      const nx=cx+dx[d], ny=cy+dy[d];
+      if(nx<0||nx>=W||ny<0||ny>=H) continue;
+      if(grid[ny*W+nx]===CFG.T_WALL) continue;
+      const ni=ny*W+nx;
+      if(visited[ni]) continue;
+      visited[ni]=1;
+      prev[ni]=cur;
+      q.push(ni);
+    }
+  }
+  return null; // không thể đến
+}
+// A* tìm đường (dùng cho CPU khó)
+function aStar(grid, sx,sy, tx,ty, W,H) {
+  if(sx===tx && sy===ty) return [];
+  const heur=(x,y)=>Math.abs(x-tx)+Math.abs(y-ty);
+  const open=[];
+  const gScore=new Float32Array(W*H).fill(Infinity);
+  const prev=new Int32Array(W*H).fill(-1);
+  const start=sy*W+sx;
+  gScore[start]=0;
+  open.push({i:start, f:heur(sx,sy)});
+  const dx=[1,-1,0,0],dy=[0,0,1,-1];
+  while(open.length) {
+    open.sort((a,b)=>a.f-b.f);
+    const {i:cur}=open.shift();
+    const cx=cur%W, cy=Math.floor(cur/W);
+    if(cx===tx && cy===ty) {
+      const path=[];
+      let node=ty*W+tx;
+      while(node!==start){
+        const p=prev[node];
+        path.unshift({dx:node%W - p%W, dy:Math.floor(node/W)-Math.floor(p/W)});
+        node=p;
+      }
+      return path;
+    }
+    for(let d=0;d<4;d++){
+      const nx=cx+dx[d], ny=cy+dy[d];
+      if(nx<0||nx>=W||ny<0||ny>=H||grid[ny*W+nx]===CFG.T_WALL) continue;
+      const ni=ny*W+nx;
+      const ng=gScore[cur]+1;
+      if(ng<gScore[ni]){
+        gScore[ni]=ng;
+        prev[ni]=cur;
+        open.push({i:ni, f:ng+heur(nx,ny)});
+      }
+    }
+  }
+  return bfs(grid,sx,sy,tx,ty,W,H);
+}
+
+/* ================================================================
+   WORLD GEN – sinh mê cung DFS
+   ================================================================ */
+function generateMaze(W, H, seed) {
+  const rng = mkRng(seed);
+  const grid = new Uint8Array(W * H).fill(CFG.T_WALL);
+  
+  // Chỉ tạo ô tại vị trí lẻ (1,1), (1,3)... để tạo cấu trúc maze
+  const carve = (x,y) => {
+    grid[y*W+x] = CFG.T_FLOOR;
+    const dirs = shuffle([[0,-2],[0,2],[-2,0],[2,0]], rng);
+    for(const [dx,dy] of dirs){
+      const nx=x+dx, ny=y+dy;
+      if(nx<=0||nx>=W-1||ny<=0||ny>=H-1) continue;
+      if(grid[ny*W+nx]===CFG.T_WALL){
+        grid[(y+dy/2)*W+(x+dx/2)] = CFG.T_FLOOR;
+        carve(nx,ny);
+      }
+    }
+  };
+  // Shuffle với rng
+  function shuffle(arr, r) {
+    const a=[...arr];
+    for(let i=a.length-1;i>0;i--){
+      const j=Math.floor(r()*(i+1));
+      [a[i],a[j]]=[a[j],a[i]];
+    }
+    return a;
+  }
+  carve(1,1);
+  
+  // Đảm bảo vị trí base là floor
+  for(const b of CFG.PLAYER_BASES){
+    grid[b.y*W+b.x]=CFG.T_FLOOR;
+    // Mở đường xung quanh base
+    for(const n of neighbors4(b.x,b.y,W,H)){
+      if(n.x%2===0&&n.y%2===0) continue;
+      grid[n.y*W+n.x]=CFG.T_FLOOR;
+    }
+  }
+  
+  // Thêm vòng lặp (loop) để giảm ngõ cụt
+  const floorCells = [];
+  for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++) if(grid[y*W+x]===CFG.T_WALL) floorCells.push({x,y});
+  const loopCount = Math.floor(floorCells.length * CFG.LOOP_ADD_RATIO);
+  shuffle(floorCells, rng);
+  let added=0;
+  for(const {x,y} of floorCells){
+    if(added>=loopCount) break;
+    // Nếu có ít nhất 2 hàng xóm là floor thì mở ô này
+    const fn = neighbors4(x,y,W,H).filter(n=>grid[n.y*W+n.x]===CFG.T_FLOOR);
+    if(fn.length>=2){ grid[y*W+x]=CFG.T_FLOOR; added++; }
+  }
+  
+  // Giảm ngõ cụt
+  for(let pass=0;pass<CFG.DEAD_END_PASSES;pass++){
+    for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
+      if(grid[y*W+x]!==CFG.T_FLOOR) continue;
+      const fn=neighbors4(x,y,W,H).filter(n=>grid[n.y*W+n.x]===CFG.T_FLOOR);
+      if(fn.length===1){
+        // Mở ngẫu nhiên 1 tường xung quanh
+        const walls=neighbors4(x,y,W,H).filter(n=>grid[n.y*W+n.x]===CFG.T_WALL && n.x>0&&n.x<W-1&&n.y>0&&n.y<H-1);
+        if(walls.length) grid[walls[Math.floor(rng()*walls.length)].y*W+walls[Math.floor(rng()*walls.length)|0].x]=CFG.T_FLOOR;
+      }
+    }
+  }
+
+  // Phục hồi tường khu vực đầu maze (y=1..3) để lấp đầy hành lang rỗng
+  // DFS bước 2 carve toàn bộ y=1 → đặt lại tường tại vị trí chẵn-x có xác suất cao
+  for(let y = 1; y <= 3; y++) {
+    for(let x = 2; x < W-2; x += 2) {
+      // Bỏ qua ô quá gần base (4 tile)
+      const nearBase = CFG.PLAYER_BASES.some(b => Math.abs(b.x-x)+Math.abs(b.y-y) <= 3);
+      if(nearBase) continue;
+      // 65% đặt tường để tạo cấu trúc maze thay vì hành lang trống
+      if(rng() < 0.65) {
+        // Chỉ đặt tường nếu không tạo ngõ cụt hoàn toàn cho ô kề
+        // (ô kề vẫn còn ít nhất 1 lối thoát)
+        const canWall = neighbors4(x,y,W,H).every(nb => {
+          if(grid[nb.y*W+nb.x] !== CFG.T_FLOOR) return true;
+          const nbFloors = neighbors4(nb.x,nb.y,W,H)
+            .filter(n=>!(n.x===x&&n.y===y)) // giả sử đặt tường ở (x,y)
+            .filter(n=>grid[n.y*W+n.x]===CFG.T_FLOOR);
+          return nbFloors.length >= 1; // ô kề vẫn thoát được
+        });
+        if(canWall) grid[y*W+x] = CFG.T_WALL;
+      }
+    }
+  }
+
+  // Quiz placement được xử lý sau bởi placeQuizGraphColoring() trong initRound
+  // để tận dụng graph coloring phân tán đều
+  return grid;
+}
+
+/* ================================================================
+   GRAPH COLORING ENGINE – thuật toán tô màu đồ thị
+   Đỉnh = floor/quiz cell, cạnh = 4-hướng kề
+   ================================================================ */
+
+// Greedy graph coloring – O(V+E), ổn định với map 41×25
+// Trả về {colorMap:Int16Array, numColors, distribution[], nodeCount}
+function applyGraphColoring(grid, W, H) {
+  const colorMap = new Int16Array(W * H).fill(-1);
+  const dxs = [1,-1,0,0], dys = [0,0,1,-1];
+  let numColors = 0;
+
+  // Duyệt theo thứ tự raster – greedy gán màu nhỏ nhất chưa dùng bởi hàng xóm
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (grid[y*W+x] === CFG.T_WALL) continue;
+      const usedColors = new Set();
+      for (let d = 0; d < 4; d++) {
+        const nx = x + dxs[d], ny = y + dys[d];
+        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+        const c = colorMap[ny*W+nx];
+        if (c >= 0) usedColors.add(c);
+      }
+      let c = 0;
+      while (usedColors.has(c)) c++;
+      colorMap[y*W+x] = c;
+      if (c + 1 > numColors) numColors = c + 1;
+    }
+  }
+
+  // Thống kê phân bố số node mỗi màu
+  const distribution = new Array(numColors).fill(0);
+  let nodeCount = 0;
+  for (let i = 0; i < W*H; i++) {
+    if (colorMap[i] >= 0) { distribution[colorMap[i]]++; nodeCount++; }
+  }
+  return { colorMap, numColors, distribution, nodeCount };
+}
+
+// Đặt quiz cells phân tán đều: mỗi nhóm màu đóng góp ít nhất 1 quiz
+// Tránh base, tránh gần tâm (nơi đặt kho báu)
+function placeQuizGraphColoring(grid, gcResult, quizCount, rng, W, H) {
+  const { colorMap, numColors } = gcResult;
+  const baseSet = new Set(CFG.PLAYER_BASES.map(b => `${b.x},${b.y}`));
+  const cx = Math.floor(W/2), cy = Math.floor(H/2);
+
+  // Gom ứng viên floor theo nhóm màu
+  const byColor = Array.from({length: numColors}, () => []);
+  for (let y = 1; y < H-1; y++) {
+    for (let x = 1; x < W-1; x++) {
+      if (grid[y*W+x] !== CFG.T_FLOOR) continue;
+      if (baseSet.has(`${x},${y}`)) continue;
+      if (Math.abs(x-cx) + Math.abs(y-cy) < 3) continue; // bảo vệ vùng kho báu
+      const c = colorMap[y*W+x];
+      if (c >= 0) byColor[c].push({x, y});
+    }
+  }
+
+  // Shuffle từng nhóm màu bằng rng deterministic
+  for (let c = 0; c < numColors; c++) {
+    for (let i = byColor[c].length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [byColor[c][i], byColor[c][j]] = [byColor[c][j], byColor[c][i]];
+    }
+  }
+
+  // Phân quota: mỗi màu đặt ít nhất 1, còn lại theo tỉ lệ kích thước nhóm
+  const perColor = Math.max(1, Math.floor(quizCount / numColors));
+  let placed = 0;
+  for (let c = 0; c < numColors && placed < quizCount; c++) {
+    let cnt = 0;
+    for (const {x, y} of byColor[c]) {
+      if (placed >= quizCount || cnt >= perColor) break;
+      grid[y*W+x] = CFG.T_QUIZ;
+      placed++; cnt++;
+    }
+  }
+  // Bổ sung nếu chưa đủ
+  for (let c = 0; c < numColors && placed < quizCount; c++) {
+    for (const {x, y} of byColor[c]) {
+      if (placed >= quizCount) break;
+      if (grid[y*W+x] === CFG.T_FLOOR) { grid[y*W+x] = CFG.T_QUIZ; placed++; }
+    }
+  }
+  return placed;
+}
+
+// Spawn monsters phân tán: mỗi quái thuộc nhóm màu khác nhau → không dồn cụm
+function spawnMonsGraphColoring(grid, gcResult, monCount, rng, W, H) {
+  const { colorMap, numColors } = gcResult;
+  const baseSet = new Set(CFG.PLAYER_BASES.map(b => `${b.x},${b.y}`));
+
+  // Gom floor/quiz theo màu, lọc gần base
+  const byColor = Array.from({length: numColors}, () => []);
+  for (let y = 2; y < H-2; y++) {
+    for (let x = 2; x < W-2; x++) {
+      const cell = grid[y*W+x];
+      if (cell === CFG.T_WALL) continue;
+      if (baseSet.has(`${x},${y}`)) continue;
+      if (CFG.PLAYER_BASES.some(b => Math.abs(b.x-x)+Math.abs(b.y-y) < 7)) continue;
+      const c = colorMap[y*W+x];
+      if (c >= 0) byColor[c].push({x, y});
+    }
+  }
+
+  const monsters = [];
+  const usedColors = new Set();
+  // Lấy 1 ứng viên từ nhóm màu lớn nhất chưa dùng → phân tán tối đa
+  for (let attempt = 0; attempt < numColors && monsters.length < monCount; attempt++) {
+    let bestColor = -1, bestLen = 0;
+    for (let c = 0; c < numColors; c++) {
+      if (!usedColors.has(c) && byColor[c].length > bestLen) {
+        bestLen = byColor[c].length; bestColor = c;
+      }
+    }
+    if (bestColor < 0) break;
+    usedColors.add(bestColor);
+    const arr = byColor[bestColor];
+    // Chọn ngẫu nhiên trong top 30% của nhóm để tránh góc
+    const topK = Math.max(1, Math.floor(arr.length * 0.3));
+    const pick = arr[Math.floor(rng() * topK)];
+    if (!pick) continue;
+    const tooClose = monsters.some(m => Math.abs(m.x-pick.x)+Math.abs(m.y-pick.y) < 8);
+    if (!tooClose) monsters.push(makeMonster(pick.x, pick.y));
+  }
+  // Fallback nếu chưa đủ
+  if (monsters.length < monCount) {
+    outer: for (let y = 3; y < H-3; y++) {
+      for (let x = 3; x < W-3; x++) {
+        if (monsters.length >= monCount) break outer;
+        if (grid[y*W+x] === CFG.T_WALL) continue;
+        if (CFG.PLAYER_BASES.some(b => Math.abs(b.x-x)+Math.abs(b.y-y) < 7)) continue;
+        if (monsters.some(m => Math.abs(m.x-x)+Math.abs(m.y-y) < 8)) continue;
+        monsters.push(makeMonster(x, y));
+      }
+    }
+  }
+  return monsters;
+}
+
+// Tính điểm nguy hiểm mỗi vùng màu: quái → +2, người giữ kho báu → +1
+// CPU hard dùng để tránh đường qua vùng nguy hiểm
+function computeZoneDanger(gcResult, monsters, players, myIdx, W) {
+  const { colorMap, numColors } = gcResult;
+  const danger = new Float32Array(numColors);
+  for (const m of monsters) {
+    const c = colorMap[m.y*W+m.x];
+    if (c >= 0) danger[c] += 2.0;
+  }
+  for (const p of players) {
+    if (p.idx === myIdx || !p.has) continue;
+    const c = colorMap[p.y*W+p.x];
+    if (c >= 0) danger[c] += 1.0;
+  }
+  return danger;
+}
+
+// A* tránh vùng nguy hiểm – CPU hard sử dụng
+// dangerWeight: hệ số nhân chi phí nguy hiểm (2-4 là hợp lý)
+function aStarSafe(grid, gcResult, dangerZones, sx,sy, tx,ty, W,H, dangerWeight=2) {
+  if (!gcResult) return aStar(grid,sx,sy,tx,ty,W,H);
+  if (sx===tx && sy===ty) return [];
+  const { colorMap } = gcResult;
+  const heur = (x,y) => Math.abs(x-tx)+Math.abs(y-ty);
+  const open = [];
+  const gScore = new Float32Array(W*H).fill(Infinity);
+  const prev = new Int32Array(W*H).fill(-1);
+  const start = sy*W+sx;
+  gScore[start] = 0;
+  open.push({i:start, f:heur(sx,sy)});
+  const dxs=[1,-1,0,0], dys=[0,0,1,-1];
+  while (open.length) {
+    open.sort((a,b)=>a.f-b.f);
+    const {i:cur} = open.shift();
+    const cx=cur%W, cy=Math.floor(cur/W);
+    if (cx===tx && cy===ty) {
+      const path=[];
+      let node=ty*W+tx;
+      while(node!==start){
+        const p=prev[node];
+        path.unshift({dx:node%W - p%W, dy:Math.floor(node/W)-Math.floor(p/W)});
+        node=p;
+      }
+      return path;
+    }
+    for (let d=0;d<4;d++) {
+      const nx=cx+dxs[d], ny=cy+dys[d];
+      if (nx<0||nx>=W||ny<0||ny>=H||grid[ny*W+nx]===CFG.T_WALL) continue;
+      const ni=ny*W+nx;
+      const c=colorMap[ni];
+      // Chi phí đi qua ô = 1 + nguy hiểm của vùng màu đó
+      const zoneCost = (c>=0 && dangerZones) ? dangerZones[c]*dangerWeight : 0;
+      const ng = gScore[cur] + 1 + zoneCost;
+      if (ng < gScore[ni]) {
+        gScore[ni]=ng; prev[ni]=cur;
+        open.push({i:ni, f:ng+heur(nx,ny)});
+      }
+    }
+  }
+  return bfs(grid,sx,sy,tx,ty,W,H); // fallback
+}
+
+/* ================================================================
+   CSP ENGINE – Constraint Satisfaction Problem placement
+   Biến: TreasurePos, MonsterPos[0..M-1], QuizPos[0..N-1]
+   Domain: tất cả floor cells, lọc trước theo ràng buộc đơn
+   Constraints: AllDifferent, khoảng cách, reachability
+   Solver: Backtracking theo phase + Forward Checking + LCV heuristic
+   ================================================================ */
+
+// Khoảng cách Manhattan giữa 2 điểm
+function manhattan(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
+
+// Kiểm tra BFS reachability: có đường từ from → to không?
+function isReachable(grid, from, to, W, H) {
+  if (from.x === to.x && from.y === to.y) return true;
+  const path = bfs(grid, from.x, from.y, to.x, to.y, W, H);
+  return path !== null && path.length > 0;
+}
+
+// Trả về tập ràng buộc theo ván (round 1→3: ngày càng chặt hơn)
+// numPlayers: 2-4 → ảnh hưởng số quái tối đa
+function getCspConstraints(round, numPlayers) {
+  const r = Math.max(1, Math.min(3, round));
+  return {
+    // Treasure: phải cách base ít nhất N tile Manhattan
+    treasureMinDistBase: 8 + r * 2,       // R1:10  R2:12  R3:14
+    // Treasure: phải có đường BFS đến từ ít nhất 1 base
+    treasureReachable: true,
+    // Monster: phải cách base ít nhất N tile
+    monsterMinDistBase: 5 + r,            // R1:6   R2:7   R3:8
+    // Monster: phải cách quái khác ít nhất N tile
+    monsterMinDistEach: 6 - Math.floor(r/2),  // R1:6  R2:5  R3:5
+    // Monster: phải cách treasure ít nhất N tile
+    monsterMinDistTreasure: 4,
+    // Quiz: phải cách quiz khác ít nhất N tile (phân tán)
+    quizMinSpread: 5 - r,                 // R1:4   R2:3   R3:2
+    // Quiz: phải cách base ít nhất N tile
+    quizMinDistBase: 3,
+    // Số quái cố định 5 con mỗi ván
+    monsterCount: 5,
+    // Số quiz cell cố định 10 ô mỗi ván
+    quizCount: 10,
+    // Max bước thử mỗi biến trước khi fallback
+    maxAttempts: 500,
+  };
+}
+
+// ── Kiểm tra ràng buộc TreasurePos ──
+// Trả về { ok:bool, reason:string }
+function cspCheckTreasure(pos, bases, constraints, grid, W, H) {
+  // Không trùng với base
+  for (const b of bases) {
+    if (pos.x === b.x && pos.y === b.y)
+      return { ok:false, reason:`✗ treasure@base(${b.x},${b.y})` };
+  }
+  // Đủ xa tất cả base (AllDifferent + khoảng cách)
+  for (const b of bases) {
+    const d = manhattan(pos, b);
+    if (d < constraints.treasureMinDistBase)
+      return { ok:false, reason:`✗ treasure_too_close_base d=${d}<${constraints.treasureMinDistBase}` };
+  }
+  // Có thể đến được từ ít nhất 1 base (đảm bảo game playable)
+  if (constraints.treasureReachable) {
+    const anyReach = bases.some(b => isReachable(grid, b, pos, W, H));
+    if (!anyReach)
+      return { ok:false, reason:'✗ treasure_unreachable_all_bases' };
+  }
+  return { ok:true, reason:'✓ treasure_ok' };
+}
+
+// ── Kiểm tra ràng buộc MonsterPos[idx] ──
+function cspCheckMonster(pos, idx, assigned, constraints, bases) {
+  // AllDifferent: không trùng với vị trí đã assign
+  if (assigned.usedSet.has(`${pos.x},${pos.y}`))
+    return { ok:false, reason:`✗ mon${idx}_pos_taken` };
+  // Phải cách base đủ xa
+  for (const b of bases) {
+    const d = manhattan(pos, b);
+    if (d < constraints.monsterMinDistBase)
+      return { ok:false, reason:`✗ mon${idx}_too_close_base d=${d}` };
+  }
+  // Phải cách treasure đủ xa
+  if (assigned.treasure) {
+    const d = manhattan(pos, assigned.treasure);
+    if (d < constraints.monsterMinDistTreasure)
+      return { ok:false, reason:`✗ mon${idx}_too_close_treasure d=${d}` };
+  }
+  // Phải cách quái khác đủ xa (forward checking trên assigned monsters)
+  for (let k = 0; k < idx; k++) {
+    if (!assigned.monsters[k]) continue;
+    const d = manhattan(pos, assigned.monsters[k]);
+    if (d < constraints.monsterMinDistEach)
+      return { ok:false, reason:`✗ mon${idx}_too_close_mon${k} d=${d}` };
+  }
+  return { ok:true, reason:`✓ mon${idx}_ok` };
+}
+
+// ── Kiểm tra ràng buộc QuizPos[idx] ──
+function cspCheckQuiz(pos, idx, assigned, constraints, bases) {
+  // AllDifferent
+  if (assigned.usedSet.has(`${pos.x},${pos.y}`))
+    return { ok:false, reason:`✗ quiz${idx}_pos_taken` };
+  // Không ở base
+  for (const b of bases) {
+    if (pos.x === b.x && pos.y === b.y)
+      return { ok:false, reason:`✗ quiz${idx}@base` };
+  }
+  // Phải cách base đủ xa
+  for (const b of bases) {
+    if (manhattan(pos, b) < constraints.quizMinDistBase)
+      return { ok:false, reason:`✗ quiz${idx}_too_close_base` };
+  }
+  // Phân tán: cách quiz đã đặt đủ xa (forward checking)
+  for (let k = 0; k < idx; k++) {
+    if (!assigned.quizzes[k]) continue;
+    const d = manhattan(pos, assigned.quizzes[k]);
+    if (d < constraints.quizMinSpread)
+      return { ok:false, reason:`✗ quiz${idx}_too_close_quiz${k} d=${d}<${constraints.quizMinSpread}` };
+  }
+  return { ok:true, reason:`✓ quiz${idx}_ok` };
+}
+
+// ── Shuffle deterministic với hàm rng đã seed ──
+function shuffleRng(arr, rng) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ── LCV ordering: ô ít gây ràng buộc nhất cho biến sau → giữ domain lớn ──
+// Đơn giản hóa: ưu tiên ô có nhiều hàng xóm floor nhất (ít cô lập)
+// và xa trung tâm hơn (vùng trung tâm thường bị nhiều biến khác cạnh tranh)
+function lcvOrder(candidates, grid, W, H) {
+  const cx = Math.floor(W/2), cy = Math.floor(H/2);
+  return candidates.slice().sort((a, b) => {
+    // Đếm floor neighbors (nhiều hơn = ít cô lập = ít constrained hơn)
+    const fna = neighbors4(a.x,a.y,W,H).filter(n=>grid[n.y*W+n.x]!==CFG.T_WALL).length;
+    const fnb = neighbors4(b.x,b.y,W,H).filter(n=>grid[n.y*W+n.x]!==CFG.T_WALL).length;
+    if (fnb !== fna) return fnb - fna; // nhiều neighbor trước (ít constrained)
+    // Tie-break: xa trung tâm hơn (giảm tranh chấp với treasure)
+    return (Math.abs(b.x-cx)+Math.abs(b.y-cy)) - (Math.abs(a.x-cx)+Math.abs(a.y-cy));
+  });
+}
+
+// ── CSP Solver chính ──
+// Trả về { success, treasure, quizCells, monsters, log, constraints }
+function cspSolve(grid, gcResult, round, numPlayers, rng, W, H) {
+  const t0 = performance.now();
+  const constraints = getCspConstraints(round, numPlayers);
+  const bases = CFG.PLAYER_BASES.slice(0, numPlayers);
+  const log = [];
+  // attempts[phase]: tổng số ô được kiểm tra mỗi phase (P0=treasure, P1=monster, P2=quiz)
+  const attempts = [0, 0, 0];
+  // bcks[phase]: số lần constraint bị vi phạm → pruning event (dùng cho báo cáo)
+  const bcks    = [0, 0, 0];
+  let totalAttempts = 0; // dùng nội bộ per-variable trong phase 2 & 3
+
+  // ── Build full domain: tất cả floor/quiz cells ──
+  const allFloor = [];
+  for (let y = 1; y < H-1; y++)
+    for (let x = 1; x < W-1; x++)
+      if (grid[y*W+x] !== CFG.T_WALL) allFloor.push({x, y});
+  log.push(`Domain: ${allFloor.length} floor cells | R${round} players=${numPlayers}`);
+
+  // Assigned state (forward checking tích hợp qua usedSet)
+  const assigned = {
+    treasure: null,
+    monsters: new Array(constraints.monsterCount).fill(null),
+    quizzes:  new Array(constraints.quizCount).fill(null),
+    usedSet:  new Set(),
+  };
+
+  // ════════════════════════════════════════════════════
+  // PHASE 1: TreasurePos
+  // Domain: cells đủ xa base, gần trung tâm (MRV: biến bị ràng buộc nhiều nhất)
+  // LCV: thử ô có nhiều floor-neighbors nhất trước
+  // ════════════════════════════════════════════════════
+  const treeDomain = shuffleRng(
+    lcvOrder(
+      allFloor.filter(p => bases.every(b => manhattan(p, b) >= constraints.treasureMinDistBase)),
+      grid, W, H
+    ),
+    rng
+  );
+  log.push(`TreasureDomain: ${treeDomain.length} candidates`);
+
+  let treasureOk = false;
+  for (const pos of treeDomain) {
+    attempts[0]++;
+    if (attempts[0] > constraints.maxAttempts) break;
+    const chk = cspCheckTreasure(pos, bases, constraints, grid, W, H);
+    if (chk.ok) {
+      assigned.treasure = pos;
+      assigned.usedSet.add(`${pos.x},${pos.y}`);
+      treasureOk = true;
+      log.push(`✓ Treasure→(${pos.x},${pos.y}) [thử=${attempts[0]} prune=${bcks[0]}]`);
+      break;
+    } else { bcks[0]++; }
+  }
+  if (!treasureOk) {
+    // Fallback: lấy ô floor gần tâm nhất, tránh trùng base
+    const fb = allFloor.find(p => !bases.some(b=>b.x===p.x&&b.y===p.y));
+    assigned.treasure = fb || findTreasurePosFallback(grid, W, H);
+    assigned.usedSet.add(`${assigned.treasure.x},${assigned.treasure.y}`);
+    log.push(`⚠ Treasure FALLBACK→(${assigned.treasure.x},${assigned.treasure.y})`);
+  }
+
+  // ════════════════════════════════════════════════════
+  // PHASE 2: MonsterPos[0..M-1]
+  // Backtracking đơn giản, forward checking qua assigned.usedSet + distance checks
+  // MRV: đặt quái trước vì domain nhỏ hơn quiz (bị ràng buộc nhiều hơn)
+  // ════════════════════════════════════════════════════
+  const monBaseDomain = shuffleRng(
+    allFloor.filter(p => bases.every(b => manhattan(p, b) >= constraints.monsterMinDistBase)),
+    rng
+  );
+  log.push(`MonsterDomain: ${monBaseDomain.length} candidates`);
+
+  for (let mi = 0; mi < constraints.monsterCount; mi++) {
+    let placed = false;
+    totalAttempts = 0;
+    for (const pos of monBaseDomain) {
+      attempts[1]++; if (++totalAttempts > constraints.maxAttempts) break;
+      const chk = cspCheckMonster(pos, mi, assigned, constraints, bases);
+      if (chk.ok) {
+        assigned.monsters[mi] = pos;
+        assigned.usedSet.add(`${pos.x},${pos.y}`);
+        placed = true;
+        log.push(`✓ Monster[${mi}]→(${pos.x},${pos.y})`);
+        break;
+      } else { bcks[1]++; }
+    }
+    if (!placed) {
+      // Fallback: chỉ cần không trùng và xa base tối thiểu 4
+      const fb = allFloor.find(p =>
+        !assigned.usedSet.has(`${p.x},${p.y}`) &&
+        bases.every(b => manhattan(p,b) >= 4)
+      );
+      if (fb) {
+        assigned.monsters[mi] = fb;
+        assigned.usedSet.add(`${fb.x},${fb.y}`);
+        log.push(`⚠ Monster[${mi}] FALLBACK→(${fb.x},${fb.y})`);
+      } else {
+        log.push(`✗ Monster[${mi}] UNPLACED (no valid cell)`);
+      }
+    }
+  }
+
+  // ════════════════════════════════════════════════════
+  // PHASE 3: QuizPos[0..N-1]
+  // Forward checking: loại ô đã dùng ngay lập tức (usedSet)
+  // Interleave theo graph-coloring groups: phân tán đều các vùng
+  // ════════════════════════════════════════════════════
+  const gcMap = gcResult ? gcResult.colorMap : null;
+  const numColors = gcResult ? gcResult.numColors : 1;
+  const quizBaseDomain = allFloor.filter(p =>
+    !bases.some(b => b.x===p.x && b.y===p.y) &&
+    bases.every(b => manhattan(p,b) >= constraints.quizMinDistBase)
+  );
+
+  // Nhóm quiz candidates theo màu GC, shuffle từng nhóm
+  const colorBuckets = Array.from({length: Math.max(numColors,1)}, () => []);
+  for (const p of quizBaseDomain) {
+    const c = (gcMap && gcMap[p.y*W+p.x] >= 0) ? gcMap[p.y*W+p.x] : 0;
+    colorBuckets[c % colorBuckets.length].push(p);
+  }
+  for (let c = 0; c < colorBuckets.length; c++)
+    colorBuckets[c] = shuffleRng(colorBuckets[c], rng);
+
+  // Interleave round-robin: C0[0], C1[0], C2[0], C0[1], C1[1]...
+  const interleaved = [];
+  const bucketPtrs = new Array(colorBuckets.length).fill(0);
+  let added = 0;
+  while (added < quizBaseDomain.length) {
+    let anyAdded = false;
+    for (let c = 0; c < colorBuckets.length; c++) {
+      if (bucketPtrs[c] < colorBuckets[c].length) {
+        interleaved.push(colorBuckets[c][bucketPtrs[c]++]);
+        anyAdded = true; added++;
+      }
+    }
+    if (!anyAdded) break;
+  }
+  log.push(`QuizDomain: ${quizBaseDomain.length} (interleaved: ${interleaved.length} across ${numColors} colors)`);
+
+  for (let qi = 0; qi < constraints.quizCount; qi++) {
+    let placed = false;
+    totalAttempts = 0;
+    for (const pos of interleaved) {
+      attempts[2]++; if (++totalAttempts > constraints.maxAttempts * 2) break;
+      if (assigned.usedSet.has(`${pos.x},${pos.y}`)) continue; // forward check
+      const chk = cspCheckQuiz(pos, qi, assigned, constraints, bases);
+      if (chk.ok) {
+        assigned.quizzes[qi] = pos;
+        assigned.usedSet.add(`${pos.x},${pos.y}`);
+        placed = true;
+        break;
+      } else { bcks[2]++; }
+    }
+    if (!placed) {
+      // Relaxed fallback: chỉ cần AllDifferent, bỏ quizMinSpread
+      const fb = interleaved.find(p =>
+        !assigned.usedSet.has(`${p.x},${p.y}`) &&
+        !bases.some(b=>b.x===p.x&&b.y===p.y)
+      );
+      if (fb) {
+        assigned.quizzes[qi] = fb;
+        assigned.usedSet.add(`${fb.x},${fb.y}`);
+        log.push(`⚠ Quiz[${qi}] FALLBACK (relaxed spread)`);
+      }
+    }
+  }
+
+  const finalMons = assigned.monsters.filter(Boolean);
+  const finalQuiz = assigned.quizzes.filter(Boolean);
+  const stats = {
+    timeMs: +(performance.now() - t0).toFixed(2),
+    attempts,             // [P0tries, P1tries, P2tries]
+    backtracks: bcks,     // [P0prune, P1prune, P2prune]
+    treasureOk,
+    monstersPlaced: finalMons.length,
+    quizPlaced: finalQuiz.length,
+  };
+  log.push(
+    `✓ CSP R${round}: T=${treasureOk} M=${finalMons.length}/${constraints.monsterCount} ` +
+    `Q=${finalQuiz.length}/${constraints.quizCount} | ` +
+    `⏱${stats.timeMs}ms tries=[${attempts}] prune=[${bcks}]`
+  );
+
+  return {
+    success: treasureOk,
+    treasure: assigned.treasure,
+    monsters: finalMons,
+    quizCells: finalQuiz,
+    log,
+    constraints,
+    stats,
+  };
+}
+
+// Đặt kho báu tại trung tâm maze (floor cell gần nhất với tâm) – fallback
+function findTreasurePosFallback(grid, W, H) {
+  const cx=Math.floor(W/2), cy=Math.floor(H/2);
+  if(grid[cy*W+cx]!==CFG.T_WALL) return {x:cx, y:cy};
+  let best=null, bd=99999;
+  for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
+    if(grid[y*W+x]===CFG.T_WALL) continue;
+    const d=Math.abs(x-cx)+Math.abs(y-cy);
+    if(d<bd){bd=d;best={x,y};}
+  }
+  return best||{x:1,y:1};
+}
+
+/* ================================================================
+   GAME STATE – trạng thái game toàn cục
+   ================================================================ */
+const GS = {
+  mode: 'offline',   // 'offline' | 'online'
+  isHost: false,
+  myIdx: 0,          // chỉ số người chơi của mình
+  round: 1,          // ván hiện tại (1-3)
+  grid: null,        // Uint8Array
+  treasure: null,    // {x,y} vị trí kho báu
+  treasureHolder: -1,// idx người đang cầm kho báu (-1=nobody)
+  players: [],       // mảng player objects
+  monsters: [],      // mảng monster objects
+  traps: [],         // mảng trap objects
+  running: false,
+  roundStartTime: 0,
+  cpuDiff: 'normal',
+  roomCode: '',
+  diffPending: false, // đang ở flow offline
+  seed: 0,
+  graphColoring: false, // debug
+  graphColorMap: null,
+  gcResult: null,       // kết quả graph coloring {colorMap,numColors,distribution,nodeCount}
+  cspLog: [],           // log CSP solver để debug
+  cspConstraints: null, // ràng buộc CSP ván hiện tại
+  cspStats: null,       // {timeMs, attempts[3], backtracks[3], fairness[], fairnessStd}
+  quizActive: false,    // đang hiện modal quiz → khóa di chuyển
+};
+
+function makePlayer(idx, name, isBot=false) {
+  const b = CFG.PLAYER_BASES[idx];
+  return {
+    idx, name, isBot,
+    x: b.x, y: b.y,
+    rx: b.x, ry: b.y,    // render positions (sub-pixel interpolation)
+    px: b.x, py: b.y,    // prev position for lerp
+    lerpT: 1,
+    has: false,           // đang cầm kho báu?
+    score: 0,             // số ván thắng
+    stunUntil: 0,
+    cpuThinkingUntil: 0,  // đang "suy nghĩ" câu quiz (CPU bị đứng)
+    alive: true,
+    color: CFG.PLAYER_COLORS[idx],
+    trapCount: 0,         // số bẫy đang đặt
+    inputSeq: 0,          // cho online reconcile
+    pendingMoves: [],
+  };
+}
+function makeMonster(x,y) {
+  return { x, y, rx:x, ry:y, px:x, py:y, lerpT:1, color:'#f80' };
+}
+function makeTrap(owner, x, y) {
+  return { owner, x, y, createdAt: Date.now(), ttl: CFG.TRAP_TTL };
+}
+
+/* ================================================================
+   GAME INIT – khởi tạo ván mới
+   ================================================================ */
+function initRound(seed, playersData, keepScore=false) {
+  GS.seed = seed || (Date.now() & 0xFFFFFF);
+  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed);
+  GS.treasureHolder = -1;
+  GS.traps = [];
+  GS.running = true;
+  GS.roundStartTime = Date.now();
+  GS.graphColorMap = null;
+  GS.cspLog = [];
+
+  // Đặt lại vị trí và trạng thái người chơi (giữ score)
+  for(let i=0;i<GS.players.length;i++){
+    const p=GS.players[i];
+    const b=CFG.PLAYER_BASES[i];
+    p.x=b.x; p.y=b.y; p.rx=b.x; p.ry=b.y; p.px=b.x; p.py=b.y; p.lerpT=1;
+    p.has=false; p.stunUntil=0; p.trapCount=0;
+    if(!keepScore) p.score=0;
+    if(playersData && playersData[i]) {
+      p.name = playersData[i].name || p.name;
+    }
+  }
+
+  // ── GRAPH COLORING: tính trước, cung cấp domain info cho CSP ──
+  GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
+  GS.graphColorMap = GS.gcResult.colorMap;
+
+  // ── CSP PLACEMENT: treasure + monsters + quiz cells ──
+  const cspRng = mkRng(GS.seed ^ 0x1F2E3D);
+  const numP = Math.max(2, GS.players.length);
+  const cspResult = cspSolve(GS.grid, GS.gcResult, GS.round, numP, cspRng, CFG.W, CFG.H);
+  GS.cspLog = cspResult.log;
+  GS.cspConstraints = cspResult.constraints;
+  GS.cspStats = cspResult.stats;
+
+  // ── FAIRNESS: tính BFS path thực từ mỗi base đến kho báu ──
+  // Đánh giá mức độ công bằng giữa các người chơi (σ nhỏ = map cân bằng hơn)
+  if (GS.treasure && GS.cspStats) {
+    const fairness = CFG.PLAYER_BASES.slice(0, numP).map((b, i) => {
+      const path = bfs(GS.grid, b.x, b.y, GS.treasure.x, GS.treasure.y, CFG.W, CFG.H);
+      return { idx: i, dist: path ? path.length : -1 };
+    });
+    const dists = fairness.filter(f => f.dist > 0).map(f => f.dist);
+    const avgd  = dists.length ? dists.reduce((a,b)=>a+b,0)/dists.length : 0;
+    const fStd  = dists.length ? +Math.sqrt(dists.reduce((a,v)=>a+(v-avgd)**2,0)/dists.length).toFixed(2) : 0;
+    GS.cspStats = { ...GS.cspStats, fairness, fairnessStd: fStd };
+    GS.cspLog.push(`📐 Fairness BFS: ${fairness.map(f=>`P${f.idx+1}:${f.dist<0?'∞':f.dist}`).join(' ')} σ=${fStd}`);
+  }
+
+  // Áp dụng kết quả CSP
+  GS.treasure = cspResult.treasure;
+  // Ghi quiz cells lên grid
+  for (const qp of cspResult.quizCells) {
+    if (GS.grid[qp.y*CFG.W+qp.x] === CFG.T_FLOOR)
+      GS.grid[qp.y*CFG.W+qp.x] = CFG.T_QUIZ;
+  }
+  // Spawn monsters từ CSP
+  GS.monsters = cspResult.monsters.map(pos => makeMonster(pos.x, pos.y));
+
+  // Cập nhật HUD
+  updateHUD();
+  updateScoreBox();
+  if(GS.graphColoring) buildGraphColoring();
+}
+
+function shuffle(arr) {
+  for(let i=arr.length-1;i>0;i--){
+    const j=ri(0,i+1);[arr[i],arr[j]]=[arr[j],arr[i]];
+  }
+  return arr;
+}
+
+/* ================================================================
+   FLOW – điều hướng màn hình game
+   ================================================================ */
+function startOfflineFlow() {
+  GS.mode='offline';
+  GS.diffPending=true;
+  showScreen('diff-screen');
+}
+
+let selectedDiff='normal';
+function selectDiff(d) {
+  selectedDiff=d;
+  document.querySelectorAll('.diff-card').forEach(c=>c.classList.remove('selected'));
+  event.currentTarget.classList.add('selected');
+}
+function confirmDiff() {
+  GS.cpuDiff = selectedDiff;
+  startOfflineGame();
+}
+
+function startOfflineGame() {
+  // 2 người chơi: P1 (human) + P2 (CPU)
+  GS.round = 1;
+  GS.isHost = true;
+  GS.myIdx = 0;
+  GS.players = [
+    makePlayer(0, getPlayerName(), false),
+    makePlayer(1, 'CPU', true),
+  ];
+  showCountdown();
+}
+
+function showCountdown() {
+  document.getElementById('cd-round').textContent = GS.round;
+  showScreen('countdown-screen');
+  let c=5;
+  const el=document.getElementById('countdown-num');
+  const sub=document.getElementById('cd-sub');
+  el.textContent=c;
+  sub.textContent='Chuẩn bị...';
+  clearInterval(GS._cdInterval);
+  GS._cdInterval=setInterval(()=>{
+    c--;
+    if(c>0){ el.textContent=c; }
+    else {
+      el.textContent='GO!';
+      sub.textContent='Bắt đầu!';
+      clearInterval(GS._cdInterval);
+      setTimeout(()=>beginGameplay(), 600);
+    }
+  },1000);
+}
+
+function beginGameplay() {
+  showScreen('game-screen');
+  resizeCanvas();
+  const seed = Date.now() & 0xFFFFFF;
+  initRound(seed, null, GS.round>1);
+  showHudMsg(`Ván ${GS.round} bắt đầu!`);
+  // Xóa các interval cũ trước khi tạo mới
+  if(GS._monsterInterval) clearInterval(GS._monsterInterval);
+  if(GS._cpuInterval) clearInterval(GS._cpuInterval);
+  if(GS._trapInterval) clearInterval(GS._trapInterval);
+  GS._monsterInterval = setInterval(moveMonsters, CFG.MONSTER_MOVE_MS);
+  GS._cpuInterval = setInterval(cpuTick, getCpuMs());
+  GS._trapInterval = setInterval(checkTraps, 500);
+  startRenderLoop();
+  updateHUD();
+  
+  // Nếu online host phát INIT
+  if(GS.mode==='online' && GS.isHost) {
+    mqttPublish({
+      type:'INIT', seed, round:GS.round,
+      players: GS.players.map(p=>({name:p.name,score:p.score,idx:p.idx}))
+    });
+  }
+}
+
+function getCpuMs() {
+  return GS.cpuDiff==='easy' ? CFG.CPU_EASY_MS : GS.cpuDiff==='hard' ? CFG.CPU_HARD_MS : CFG.CPU_NORMAL_MS;
+}
+
+/* ================================================================
+   REGENERATE MAP – tái sinh bản đồ khi nhặt kéo báu
+   Giữ nguyên: vị trí người chơi, score, người cầm kéo báu
+   Tái tạo: maze, quiz cells, quai vật
+   ================================================================ */
+function regenerateMap() {
+  // Seed mới hoàn toàn ngẫu nhiên
+  GS.seed = (Date.now() ^ (Math.random()*0xFFFFFF|0)) & 0xFFFFFF;
+  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed);
+
+  // Graph coloring trên map mới
+  GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
+  GS.graphColorMap = GS.gcResult.colorMap;
+
+  // CSP: đặt quiz + quái (bỏ qua treasure vì đang được cầm)
+  const cspRng = mkRng(GS.seed ^ 0xDEAD);
+  const numP = Math.max(2, GS.players.length);
+  const cspResult = cspSolve(GS.grid, GS.gcResult, GS.round, numP, cspRng, CFG.W, CFG.H);
+  GS.cspLog = cspResult.log;
+  GS.cspConstraints = cspResult.constraints;
+
+  // Ghi quiz lên grid
+  for (const qp of cspResult.quizCells) {
+    if (GS.grid[qp.y*CFG.W+qp.x] === CFG.T_FLOOR)
+      GS.grid[qp.y*CFG.W+qp.x] = CFG.T_QUIZ;
+  }
+
+  // Spawn lại quái vật
+  GS.monsters = cspResult.monsters.map(pos => makeMonster(pos.x, pos.y));
+  GS.traps = []; // xóa bẫy cũ (map đã thay)
+
+  // Kiểm tra người chơi bị kẹt trong tường (do map mới)
+  // → dịch về ô floor gần nhất nếu bị kẹt
+  for (const p of GS.players) {
+    if (GS.grid[p.y*CFG.W+p.x] === CFG.T_WALL) {
+      // Tìm ô floor gần nhất
+      let best=null, bd=9999;
+      for(let y=1;y<CFG.H-1;y++) for(let x=1;x<CFG.W-1;x++) {
+        if(GS.grid[y*CFG.W+x]===CFG.T_WALL) continue;
+        const d=Math.abs(x-p.x)+Math.abs(y-p.y);
+        if(d<bd){bd=d;best={x,y};}
+      }
+      if(best){p.px=p.x;p.py=p.y;p.lerpT=0;p.x=best.x;p.y=best.y;}
+    }
+  }
+
+  showHudMsg('⚡ Bản đồ thay đổi! 🗺️', 2500);
+  if(GS.mode==='online'&&GS.isHost) {
+    // Gửi seed mới cho client (client tự tái tạo)
+    mqttPublish({type:'REGEN_MAP', seed: GS.seed});
+    broadcastState();
+  }
+}
+
+/* ================================================================
+   GAME LOGIC – core rules
+   ================================================================ */
+// Di chuyển người chơi (human local)
+function tryMove(pidx, dx, dy) {
+  if(!GS.running) return;
+  if(GS.quizActive) return; // đang trả lời quiz, khóa di chuyển
+  const p=GS.players[pidx];
+  if(!p) return;
+  if(Date.now()<p.stunUntil){ showHudMsg('Bạn đang bị stun!'); return; }
+  const nx=p.x+dx, ny=p.y+dy;
+  if(nx<0||nx>=CFG.W||ny<0||ny>=CFG.H) return;
+  const cell=GS.grid[ny*CFG.W+nx];
+  if(cell===CFG.T_WALL) return;
+  
+  // Lưu vị trí cũ để lerp
+  p.px=p.x; p.py=p.y; p.lerpT=0;
+  p.x=nx; p.y=ny;
+  
+  if(GS.mode==='online' && !GS.isHost){
+    // Gửi MOVE, client prediction
+    p.inputSeq++;
+    p.pendingMoves.push({seq:p.inputSeq, dx, dy});
+    mqttPublish({type:'MOVE', seq:p.inputSeq, dx, dy, pidx:GS.myIdx});
+    return; // host sẽ xác nhận
+  }
+  
+  resolveMove(pidx);
+}
+
+// Xử lý hậu quả di chuyển (host/offline)
+function resolveMove(pidx) {
+  const p=GS.players[pidx];
+  const nx=p.x, ny=p.y;
+  const cell=GS.grid[ny*CFG.W+nx];
+  
+  // Quiz cell
+  if(cell===CFG.T_QUIZ && GS.mode==='offline') {
+    GS.grid[ny*CFG.W+nx]=CFG.T_FLOOR; // convert sau khi đi vào
+    triggerQuiz(pidx);
+  }
+  
+  // Nhặt kho báu
+  if(GS.treasureHolder===-1 && GS.treasure && nx===GS.treasure.x && ny===GS.treasure.y){
+    GS.treasureHolder=pidx;
+    p.has=true;
+    showHudMsg(`${p.name} nhặt được kho báu! 🗝️`);
+    if(GS.mode==='online'&&GS.isHost) broadcastState();
+    // Bản đồ thay đổi khi có người nhặt kho báu
+    setTimeout(regenerateMap, 600);
+  }
+  
+  // Cướp kho báu từ người khác
+  if(GS.treasureHolder>=0 && GS.treasureHolder!==pidx){
+    const holder=GS.players[GS.treasureHolder];
+    if(holder && holder.x===nx && holder.y===ny){
+      // Cướp!
+      holder.has=false;
+      const ob=CFG.PLAYER_BASES[holder.idx];
+      holder.px=holder.x; holder.py=holder.y; holder.lerpT=0;
+      holder.x=ob.x; holder.y=ob.y;
+      p.has=true;
+      GS.treasureHolder=pidx;
+      showHudMsg(`${p.name} cướp kho báu! 🗡️`);
+      if(GS.mode==='online'&&GS.isHost) broadcastState();
+    }
+  }
+  
+  // Giao kho báu về base
+  if(p.has){
+    const b=CFG.PLAYER_BASES[pidx];
+    if(nx===b.x && ny===b.y){
+      // THẮNG VÁN!
+      p.has=false;
+      GS.treasureHolder=-1;
+      endRound(pidx);
+      return;
+    }
+  }
+  
+  // Bẫy
+  checkStepOnTrap(pidx);
+
+  // Va chạm quái vật: người chơi đi vào ô có quái
+  for(const m of GS.monsters) {
+    if(m.x === nx && m.y === ny) {
+      hitPlayerByMonster(p);
+      break;
+    }
+  }
+
+  if(GS.mode==='online'&&GS.isHost) broadcastState();
+}
+
+// Kiểm tra bẫy tại vị trí người chơi
+function checkStepOnTrap(pidx) {
+  const p=GS.players[pidx];
+  for(let i=GS.traps.length-1;i>=0;i--){
+    const t=GS.traps[i];
+    if(t.owner===pidx) continue; // không dính bẫy mình
+    if(t.x===p.x && t.y===p.y){
+      p.stunUntil=Date.now()+CFG.STUN_MS;
+      if(p.has){
+        // Thả kho báu tại vị trí dính bẫy
+        GS.treasure={x:p.x, y:p.y};
+        p.has=false;
+        GS.treasureHolder=-1;
+        showHudMsg(`${p.name} dính bẫy! Kho báu rơi! 🪤`);
+      } else {
+        showHudMsg(`${p.name} dính bẫy! 🪤`);
+      }
+      GS.traps.splice(i,1);
+      const owner=GS.players[t.owner];
+      if(owner) owner.trapCount=Math.max(0,owner.trapCount-1);
+      return;
+    }
+  }
+}
+
+// Đặt bẫy
+function placeTrap(pidx) {
+  if(!GS.running) return;
+  const p=GS.players[pidx];
+  if(!p||p.trapCount>=CFG.TRAP_LIMIT) return;
+  if(Date.now()<p.stunUntil) return;
+  // Không đặt tại base
+  const atBase=CFG.PLAYER_BASES.some(b=>b.x===p.x&&b.y===p.y);
+  if(atBase) return;
+  GS.traps.push(makeTrap(pidx,p.x,p.y));
+  p.trapCount++;
+  showHudMsg('Đã đặt bẫy! 🪤');
+  if(GS.mode==='online'&&GS.isHost) broadcastState();
+}
+
+// Kiểm tra bẫy hết hạn
+function checkTraps() {
+  const now=Date.now();
+  for(let i=GS.traps.length-1;i>=0;i--){
+    const t=GS.traps[i];
+    if(now-t.createdAt>t.ttl){
+      const owner=GS.players[t.owner];
+      if(owner) owner.trapCount=Math.max(0,owner.trapCount-1);
+      GS.traps.splice(i,1);
+    }
+  }
+}
+
+// Kết thúc ván
+function endRound(winnerIdx) {
+  if(!GS.running) return;
+  GS.running=false;
+  clearInterval(GS._monsterInterval);
+  clearInterval(GS._cpuInterval);
+  clearInterval(GS._trapInterval);
+  
+  const winner=GS.players[winnerIdx];
+  if(!winner) return;
+  winner.score++;
+  
+  if(GS.mode==='online'&&GS.isHost) {
+    mqttPublish({type:'ROUND_END', winner:winnerIdx, scores:GS.players.map(p=>p.score)});
+  }
+  
+  showRoundEnd(winnerIdx);
+}
+
+function showRoundEnd(winnerIdx) {
+  const w=GS.players[winnerIdx];
+  document.getElementById('round-winner-name').textContent = w ? sanitize(w.name) : '---';
+  // Cập nhật điểm
+  let scoreHtml='';
+  for(const p of GS.players){
+    scoreHtml+=`<div style="color:${p.color};margin:4px 0;">● ${sanitize(p.name)}: ${p.score} ván thắng</div>`;
+  }
+  document.getElementById('round-scores').innerHTML=scoreHtml;
+  
+  // Kiểm tra ai thắng trận?
+  const matchWinner=checkMatchEnd();
+  const el=document.getElementById('round-end-screen');
+  el.classList.add('show');
+  
+  const delay = matchWinner!==-1 ? 500 : CFG.ROUND_END_DELAY;
+  const msg = matchWinner!==-1 ? 'Kết thúc trận...' : `Ván tiếp theo sau ${CFG.ROUND_END_DELAY/1000} giây...`;
+  document.getElementById('round-next-msg').textContent=msg;
+  
+  setTimeout(()=>{
+    el.classList.remove('show');
+    if(matchWinner!==-1){
+      showMatchEnd(matchWinner);
+    } else {
+      GS.round++;
+      if(GS.mode==='online'&&GS.isHost){
+        mqttPublish({type:'NEXT_ROUND', round:GS.round});
+      }
+      showCountdown();
+    }
+  }, delay);
+}
+
+function checkMatchEnd() {
+  // Ai thắng 2 ván trước thắng trận
+  for(const p of GS.players){
+    if(p.score >= Math.ceil(CFG.BO3/2)) return p.idx;
+  }
+  // Hết 3 ván, ai điểm cao hơn thắng
+  if(GS.round>=CFG.BO3){
+    let best=-1, bscore=-1;
+    for(const p of GS.players){
+      if(p.score>bscore){bscore=p.score;best=p.idx;}
+    }
+    return best;
+  }
+  return -1;
+}
+
+function showMatchEnd(winnerIdx) {
+  const w=GS.players[winnerIdx];
+  document.getElementById('match-winner-name').textContent = w ? sanitize(w.name) : '---';
+  let scoreHtml='';
+  for(const p of GS.players){
+    const crown=p.idx===winnerIdx?'👑':'';
+    scoreHtml+=`<div style="color:${p.color};margin:4px 0;">${crown} ${sanitize(p.name)}: ${p.score} ván thắng</div>`;
+  }
+  document.getElementById('match-scores').innerHTML=scoreHtml;
+  document.getElementById('match-end-screen').classList.add('show');
+  
+  if(GS.mode==='online'&&GS.isHost){
+    mqttPublish({type:'MATCH_END', winner:winnerIdx});
+  }
+}
+
+function backToLobby() {
+  document.getElementById('match-end-screen').classList.remove('show');
+  document.getElementById('round-end-screen').classList.remove('show');
+  clearGameIntervals();
+  stopRenderLoop();
+  if(GS.mode==='online') {
+    mqttPublish({type:'RETURN_LOBBY'});
+    setupRoomScreen();
+  } else {
+    showScreen('lobby-screen');
+  }
+}
+
+function clearGameIntervals() {
+  clearInterval(GS._monsterInterval);
+  clearInterval(GS._cpuInterval);
+  clearInterval(GS._trapInterval);
+  clearInterval(GS._cdInterval);
+  GS._monsterInterval=GS._cpuInterval=GS._trapInterval=GS._cdInterval=null;
+}
+
+/* ================================================================
+   MONSTER AI – quái vật di chuyển
+   ================================================================ */
+// Hàm xử lý chung khi người chơi bị quái tấn công (dùng cả 2 chiều)
+function hitPlayerByMonster(p) {
+  if(Date.now() < p.stunUntil) return; // đang stun rồi, bỏ qua
+  p.stunUntil = Date.now() + CFG.STUN_MS;
+  if(p.has) {
+    GS.treasure = {x: p.x, y: p.y};
+    p.has = false;
+    GS.treasureHolder = -1;
+    showHudMsg(`${p.name} bị quái vật tấn công! 👹`);
+  } else {
+    showHudMsg(`${p.name} bị quái vật tấn công! 👹`);
+  }
+  // Quay về base
+  const b = CFG.PLAYER_BASES[p.idx];
+  p.px = p.x; p.py = p.y; p.lerpT = 0;
+  p.x = b.x; p.y = b.y;
+}
+function moveMonsters() {
+  if(!GS.running) return;
+  const alivePlayers = GS.players.filter(p => p.alive);
+  if(!alivePlayers.length) return;
+
+  for(let mi = 0; mi < GS.monsters.length; mi++){
+    const m = GS.monsters[mi];
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    shuffle(dirs);
+    let tx=m.x, ty=m.y;
+
+    // Phân công mục tiêu: mỗi con quái được giao một người chơi khác nhau
+    // theo vòng tròn (mi % numPlayers) → không dồn vào 1 góc
+    // Nếu quái đang rất gần mục tiêu (<= 2 tile), đổi sang người chơi khác
+    const assignedTarget = alivePlayers[mi % alivePlayers.length];
+    const distToAssigned = Math.abs(m.x-assignedTarget.x)+Math.abs(m.y-assignedTarget.y);
+    let target;
+    if(distToAssigned <= 2 && alivePlayers.length > 1){
+      // Đã dồn sát rồi → chuyển sang người chơi tiếp theo
+      target = alivePlayers[(mi + 1) % alivePlayers.length];
+    } else {
+      target = assignedTarget;
+    }
+
+    if(Math.random() < 0.85){
+      const path = bfs(GS.grid, m.x, m.y, target.x, target.y, CFG.W, CFG.H);
+      if(path && path.length){ tx=m.x+path[0].dx; ty=m.y+path[0].dy; }
+      else { const d=dirs[0]; tx=m.x+d[0]; ty=m.y+d[1]; }
+    } else {
+      const d=dirs[0]; tx=m.x+d[0]; ty=m.y+d[1];
+    }
+    // Kiểm tra hợp lệ
+    if(tx>=0&&tx<CFG.W&&ty>=0&&ty<CFG.H&&GS.grid[ty*CFG.W+tx]!==CFG.T_WALL){
+      m.px=m.x; m.py=m.y; m.lerpT=0;
+      m.x=tx; m.y=ty;
+    }
+    // Va chạm với người chơi
+    for(const p of GS.players){
+      if(p.x===m.x&&p.y===m.y){
+        hitPlayerByMonster(p);
+      }
+    }
+  }
+  if(GS.mode==='online'&&GS.isHost){
+    mqttPublish({type:'MONS', mons:GS.monsters.map(m=>({x:m.x,y:m.y}))});
+  }
+}
+
+/* ================================================================
+   CPU AI – bot
+   ================================================================ */
+function cpuTick() {
+  if(!GS.running) return;
+  const cpu=GS.players.find(p=>p.isBot);
+  if(!cpu||Date.now()<cpu.stunUntil||Date.now()<cpu.cpuThinkingUntil) return;
+  
+  let target=null;
+  
+  if(GS.cpuDiff==='easy'){
+    // Dễ: di chuyển ngẫu nhiên, thỉnh thoảng hướng tới kho báu
+    if(Math.random()<0.3){
+      target = GS.treasureHolder===-1 ? GS.treasure : (cpu.has ? CFG.PLAYER_BASES[cpu.idx] : GS.treasure);
+    }
+    if(!target){
+      const dirs=shuffle([[1,0],[-1,0],[0,1],[0,-1]]);
+      for(const [dx,dy] of dirs){
+        const nx=cpu.x+dx, ny=cpu.y+dy;
+        if(nx>=0&&nx<CFG.W&&ny>=0&&ny<CFG.H&&GS.grid[ny*CFG.W+nx]!==CFG.T_WALL){
+          doMovePlayer(cpu.idx,dx,dy); return;
+        }
+      }
+      return;
+    }
+  } else {
+    // Thường/Khó: A* / BFS tới mục tiêu
+    if(cpu.has){
+      target=CFG.PLAYER_BASES[cpu.idx]; // mang về base
+    } else if(GS.treasureHolder>=0&&GS.treasureHolder!==cpu.idx){
+      // Cướp kho báu
+      const holder=GS.players[GS.treasureHolder];
+      if(holder) target={x:holder.x,y:holder.y};
+    } else {
+      target=GS.treasure; // tìm kho báu
+    }
+  }
+  
+  if(!target) return;
+  
+  let path;
+  if(GS.cpuDiff==='hard' && GS.gcResult){
+    // CPU khó: A* tránh vùng nguy hiểm (nhiều quái / người giữ kho báu)
+    const danger = computeZoneDanger(GS.gcResult, GS.monsters, GS.players, cpu.idx, CFG.W);
+    path = aStarSafe(GS.grid, GS.gcResult, danger, cpu.x,cpu.y, target.x,target.y, CFG.W,CFG.H, 2);
+  } else {
+    // Easy/Normal: BFS đơn giản
+    path = bfs(GS.grid, cpu.x,cpu.y, target.x,target.y, CFG.W,CFG.H);
+  }
+  if(path&&path.length){
+    const {dx,dy}=path[0];
+    doMovePlayer(cpu.idx,dx,dy);
+  }
+}
+
+// Di chuyển bất kỳ người chơi (nội bộ, không gửi mạng)
+function doMovePlayer(pidx, dx, dy) {
+  const p=GS.players[pidx];
+  if(!p||Date.now()<p.stunUntil) return;
+  const nx=p.x+dx, ny=p.y+dy;
+  if(nx<0||nx>=CFG.W||ny<0||ny>=CFG.H||GS.grid[ny*CFG.W+nx]===CFG.T_WALL) return;
+  p.px=p.x; p.py=p.y; p.lerpT=0;
+  p.x=nx; p.y=ny;
+  resolveMove(pidx);
+}
+
+/* ================================================================
+   QUIZ – câu hỏi
+   ================================================================ */
+let quizCallback=null;
+function triggerQuiz(pidx) {
+  if(!GS.running) return;
+  const p=GS.players[pidx];
+
+  // CPU: không hiện modal, đứng yên 3s rồi tự vượt qua
+  if(p && p.isBot) {
+    p.cpuThinkingUntil = Date.now() + 3000;
+    showHudMsg('🤖 CPU đang suy nghĩ...', 3000);
+    setTimeout(() => {
+      if(!GS.running) return;
+      p.cpuThinkingUntil = 0;
+      handleQuizResult(pidx, true);
+    }, 3000);
+    return;
+  }
+
+  const q=CFG.QUIZ_POOL[ri(0,CFG.QUIZ_POOL.length)];
+  const overlay=document.getElementById('modal-overlay');
+  document.getElementById('quiz-question').textContent=q.q;
+  const opts=document.getElementById('quiz-opts');
+  opts.innerHTML='';
+  q.opts.forEach((o,i)=>{
+    const btn=document.createElement('div');
+    btn.className='quiz-opt';
+    btn.textContent=o;
+    btn.onclick=()=>{
+      // Vô hiệu hóa tất cả
+      opts.querySelectorAll('.quiz-opt').forEach(b=>b.onclick=null);
+      if(i===q.ans){
+        btn.classList.add('correct');
+        setTimeout(()=>{ overlay.classList.remove('show'); GS.quizActive=false; handleQuizResult(pidx,true); },700);
+      } else {
+        btn.classList.add('wrong');
+        opts.querySelectorAll('.quiz-opt')[q.ans].classList.add('correct');
+        setTimeout(()=>{ overlay.classList.remove('show'); GS.quizActive=false; handleQuizResult(pidx,false); },1000);
+      }
+    };
+    opts.appendChild(btn);
+  });
+  overlay.classList.add('show');
+  GS.quizActive = true; // khóa di chuyển khi quiz đang hiện
+}
+function handleQuizResult(pidx, correct) {
+  const p=GS.players[pidx];
+  if(correct){
+    showHudMsg('Trả lời đúng! Bạn không bị stun 👍');
+  } else {
+    p.stunUntil=Date.now()+CFG.STUN_MS;
+    showHudMsg('Sai rồi! Bị stun 😵');
+  }
+}
+
+/* ================================================================
+   RENDER – vẽ game
+   ================================================================ */
+const cvs = document.getElementById('cvs');
+const ctx = cvs.getContext('2d');
+let rafId=null, lastRaf=0, fps=0, fpsCounter=0, fpsTime=0;
+
+function resizeCanvas() {
+  const wrap = document.getElementById('canvas-wrap');
+  const ww=wrap.clientWidth, wh=wrap.clientHeight;
+  const mazeW=CFG.W*CFG.TILE, mazeH=CFG.H*CFG.TILE;
+  const scale=Math.min(ww/mazeW, wh/mazeH, 2); // max 2x
+  cvs.width=mazeW; cvs.height=mazeH;
+  cvs.style.width=`${mazeW*scale}px`;
+  cvs.style.height=`${mazeH*scale}px`;
+}
+window.addEventListener('resize',resizeCanvas);
+
+function startRenderLoop() {
+  if(rafId) cancelAnimationFrame(rafId);
+  lastRaf=performance.now();
+  rafId=requestAnimationFrame(renderLoop);
+}
+function stopRenderLoop() {
+  if(rafId) cancelAnimationFrame(rafId);
+  rafId=null;
+}
+
+function renderLoop(ts) {
+  rafId=requestAnimationFrame(renderLoop);
+  const dt=(ts-lastRaf)/1000;
+  lastRaf=ts;
+  
+  // FPS counter
+  fpsCounter++;
+  if(ts-fpsTime>=1000){ fps=fpsCounter; fpsCounter=0; fpsTime=ts; }
+  
+  // Cập nhật lerp
+  const lspd = 10;
+  for(const p of GS.players) p.lerpT=Math.min(1, p.lerpT+dt*lspd);
+  for(const m of GS.monsters) m.lerpT=Math.min(1, m.lerpT+dt*lspd);
+  
+  // Vẽ
+  drawFrame();
+  updateDebugPanel();
+  updateHUD();
+}
+
+function drawFrame() {
+  const W=CFG.W, H=CFG.H, T=CFG.TILE;
+  ctx.clearRect(0,0,cvs.width,cvs.height);
+  
+  // Nền
+  ctx.fillStyle='#070714';
+  ctx.fillRect(0,0,cvs.width,cvs.height);
+  
+  // Vẽ tiles
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    const cell=GS.grid ? GS.grid[y*W+x] : CFG.T_WALL;
+    const px=x*T, py=y*T;
+    if(cell===CFG.T_WALL){
+      // Tường: xanh xám rõ nét
+      ctx.fillStyle='#3c3c7c';
+      ctx.fillRect(px,py,T,T);
+      // Highlight trên
+      ctx.fillStyle='#5050a0';
+      ctx.fillRect(px,py,T,2);
+      ctx.fillRect(px,py,2,T);
+      // Bóng dưới
+      ctx.fillStyle='#22224a';
+      ctx.fillRect(px,py+T-2,T,2);
+      ctx.fillRect(px+T-2,py,2,T);
+    } else if(cell===CFG.T_FLOOR){
+      // Đường đi: tối nhưng rõ khác tường
+      ctx.fillStyle='#0e0e22';
+      ctx.fillRect(px,py,T,T);
+      ctx.fillStyle='#16163a';
+      ctx.fillRect(px+1,py+1,T-2,T-2);
+    } else if(cell===CFG.T_QUIZ){
+      ctx.fillStyle='#0e0e22';
+      ctx.fillRect(px,py,T,T);
+      ctx.fillStyle='#35126e';
+      ctx.fillRect(px+1,py+1,T-2,T-2);
+      // Viền sáng
+      ctx.strokeStyle='#a060ff';
+      ctx.lineWidth=1;
+      ctx.strokeRect(px+1.5,py+1.5,T-3,T-3);
+      ctx.fillStyle='#d090ff';
+      ctx.font=`bold ${T-3}px sans-serif`;
+      ctx.textAlign='center';
+      ctx.fillText('?',px+T/2,py+T-3);
+    }
+    
+    // Graph coloring debug overlay – bảng màu 8 màu, alpha nhẹ 0x28
+    if(GS.graphColoring && GS.graphColorMap){
+      const cidx=GS.graphColorMap[y*W+x];
+      if(cidx>=0 && cell!==CFG.T_WALL){
+        // 8 màu phân biệt cao, alpha=0x28 (~16%) để không che gameplay
+        const PALETTE=[
+          '#ff4040','#40ff40','#4080ff','#ffd700',
+          '#ff40ff','#40ffff','#ff8000','#a0ff80'
+        ];
+        ctx.fillStyle=PALETTE[cidx%PALETTE.length]+'28';
+        ctx.fillRect(px,py,T,T);
+        // Viền mỏng để thấy ranh giới vùng
+        ctx.strokeStyle=PALETTE[cidx%PALETTE.length]+'60';
+        ctx.lineWidth=0.5;
+        ctx.strokeRect(px+0.5,py+0.5,T-1,T-1);
+      }
+    }
+  }
+  
+  // Vẽ legend graph coloring khi debug bật
+  if(GS.graphColoring && GS.gcResult){
+    const PALETTE=[
+      '#ff4040','#40ff40','#4080ff','#ffd700',
+      '#ff40ff','#40ffff','#ff8000','#a0ff80'
+    ];
+    const { numColors, distribution, nodeCount } = GS.gcResult;
+    // Tính danger mỗi vùng nếu có
+    const danger = GS.gcResult ? computeZoneDanger(GS.gcResult,GS.monsters,GS.players,GS.myIdx,W) : null;
+    const lx=4, ly=4, lh=10, lw=70;
+    ctx.save();
+    ctx.fillStyle='#000000aa';
+    ctx.fillRect(lx-2, ly-2, lw+4, numColors*(lh+2)+14);
+    ctx.font='bold 7px monospace';
+    ctx.textAlign='left';
+    for(let c=0;c<numColors;c++){
+      const col=PALETTE[c%PALETTE.length];
+      ctx.fillStyle=col;
+      ctx.fillRect(lx, ly+c*(lh+2), 8, lh);
+      const pct=nodeCount>0?Math.round(distribution[c]/nodeCount*100):0;
+      const dng=danger?danger[c].toFixed(1):'0.0';
+      ctx.fillStyle='#eee';
+      ctx.fillText(`C${c}: ${distribution[c]}n ${pct}% ⚠${dng}`, lx+10, ly+c*(lh+2)+8);
+    }
+    ctx.fillStyle='#aaa';
+    ctx.font='6px monospace';
+    ctx.fillText(`${numColors} màu / ${nodeCount} node`, lx, ly+numColors*(lh+2)+10);
+    ctx.restore();
+  }
+
+  // Vẽ base markers
+  for(let i=0;i<GS.players.length;i++){
+    const b=CFG.PLAYER_BASES[i];
+    const p=GS.players[i];
+    ctx.fillStyle=p.color+'33';
+    ctx.fillRect(b.x*T-1,b.y*T-1,T+2,T+2);
+    ctx.strokeStyle=p.color;
+    ctx.lineWidth=1.5;
+    ctx.strokeRect(b.x*T+1,b.y*T+1,T-2,T-2);
+    ctx.fillStyle=p.color;
+    ctx.font='8px sans-serif';
+    ctx.textAlign='center';
+    ctx.fillText('B'+(i+1),b.x*T+T/2,b.y*T+T/2+3);
+  }
+  
+  // Vẽ kho báu
+  if(GS.treasure && GS.treasureHolder===-1){
+    const gx=GS.treasure.x*T+T/2, gy=GS.treasure.y*T+T/2;
+    ctx.save();
+    ctx.shadowColor='#f0c040'; ctx.shadowBlur=8;
+    ctx.fillStyle='#f0c040';
+    ctx.font=`${T}px sans-serif`;
+    ctx.textAlign='center';
+    ctx.fillText('💰',gx,gy+T/2-1);
+    ctx.restore();
+  }
+  
+  // Vẽ bẫy
+  for(const t of GS.traps){
+    const age=(Date.now()-t.createdAt)/t.ttl;
+    const alpha=1-age*0.5;
+    ctx.fillStyle=`rgba(255,80,0,${alpha*0.7})`;
+    ctx.beginPath();
+    ctx.arc(t.x*T+T/2, t.y*T+T/2, T*0.3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle=`rgba(255,160,0,${alpha})`;
+    ctx.lineWidth=1;
+    ctx.stroke();
+  }
+  
+  // Vẽ quái
+  for(const m of GS.monsters){
+    const rx=lerp(m.px,m.x,m.lerpT)*T+T/2;
+    const ry=lerp(m.py,m.y,m.lerpT)*T+T/2;
+    ctx.save();
+    ctx.shadowColor='#f80'; ctx.shadowBlur=6;
+    ctx.fillStyle='#f80';
+    ctx.font=`${T}px sans-serif`;
+    ctx.textAlign='center';
+    ctx.fillText('👹',rx,ry+T/2-1);
+    ctx.restore();
+  }
+  
+  // Vẽ người chơi
+  for(const p of GS.players){
+    const rx=lerp(p.px,p.x,p.lerpT)*T;
+    const ry=lerp(p.py,p.y,p.lerpT)*T;
+    const cx=rx+T/2, cy=ry+T/2;
+    const r=T/2-1;
+    
+    // Stun effect
+    if(Date.now()<p.stunUntil){
+      ctx.fillStyle='#fff4';
+      ctx.beginPath();
+      ctx.arc(cx,cy,r+3,0,Math.PI*2);
+      ctx.fill();
+    }
+    
+    ctx.save();
+    // Shadow glow
+    ctx.shadowColor=p.color; ctx.shadowBlur=8;
+    ctx.fillStyle=p.color;
+    ctx.beginPath();
+    ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+    
+    // Mắt đơn giản
+    ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.arc(cx-2,cy-1,1.5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+2,cy-1,1.5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#000';
+    ctx.beginPath(); ctx.arc(cx-2,cy-1,0.8,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+2,cy-1,0.8,0,Math.PI*2); ctx.fill();
+    
+    // Kho báu indicator
+    if(p.has){
+      ctx.fillStyle='#f0c040';
+      ctx.font='8px sans-serif';
+      ctx.textAlign='center';
+      ctx.fillText('💰',cx,ry-1);
+    }
+    
+    // Tên
+    ctx.fillStyle=p.color;
+    ctx.font='bold 7px sans-serif';
+    ctx.textAlign='center';
+    ctx.fillText(p.name.substring(0,6), cx, ry+T+6);
+  }
+}
+
+/* ================================================================
+   HUD
+   ================================================================ */
+function updateHUD() {
+  const el=document.getElementById('hud-round');
+  if(el) el.textContent=GS.round;
+  const tel=document.getElementById('hud-timer');
+  if(tel&&GS.roundStartTime) tel.textContent=Math.floor((Date.now()-GS.roundStartTime)/1000);
+  updateScoreBox();
+}
+function updateScoreBox() {
+  const box=document.getElementById('score-box');
+  if(!box) return;
+  box.innerHTML='';
+  for(const p of GS.players){
+    const d=document.createElement('div');
+    d.className='p-score';
+    d.innerHTML=`<span class="dot" style="background:${p.color}"></span>${sanitize(p.name).substring(0,8)}: ${p.score}`;
+    box.appendChild(d);
+  }
+}
+
+/* ================================================================
+   INPUT – bàn phím & cảm ứng
+   ================================================================ */
+const keys={};
+window.addEventListener('keydown', e=>{
+  keys[e.key]=true;
+  
+  // Debug panel toggle
+  if(e.key==='Tab'){ e.preventDefault(); toggleDebug(); return; }
+  if(e.key==='g'||e.key==='G'){ toggleGraphColoring(); return; }
+  
+  // Đặt bẫy
+  if(e.key===' '||e.key==='Space'){ placeTrap(GS.myIdx); return; }
+  
+  if(!GS.running) return;
+  const p=GS.players[GS.myIdx];
+  if(!p||p.isBot) return;
+  
+  switch(e.key){
+    case 'ArrowUp': case 'w': case 'W': e.preventDefault(); tryMove(GS.myIdx,0,-1); break;
+    case 'ArrowDown': case 's': case 'S': e.preventDefault(); tryMove(GS.myIdx,0,1); break;
+    case 'ArrowLeft': case 'a': case 'A': e.preventDefault(); tryMove(GS.myIdx,-1,0); break;
+    case 'ArrowRight': case 'd': case 'D': e.preventDefault(); tryMove(GS.myIdx,1,0); break;
+  }
+});
+window.addEventListener('keyup', e=>{ keys[e.key]=false; });
+
+// Touch controls
+const touchState={};
+function touchDir(dir) {
+  touchState[dir]=true;
+  if(!GS.running) return;
+  switch(dir){
+    case 'up':    tryMove(GS.myIdx,0,-1); break;
+    case 'down':  tryMove(GS.myIdx,0,1); break;
+    case 'left':  tryMove(GS.myIdx,-1,0); break;
+    case 'right': tryMove(GS.myIdx,1,0); break;
+  }
+}
+function touchRelease(dir) { delete touchState[dir]; }
+
+// Hiện touch controls trên mobile
+function checkMobile() {
+  const tc=document.getElementById('touch-ctrl');
+  if('ontouchstart' in window || navigator.maxTouchPoints>0){
+    tc.style.display='grid';
+  }
+}
+checkMobile();
+
+/* ================================================================
+   DEBUG PANEL
+   ================================================================ */
+/* ── Báo cáo chất lượng map ra console – gọi mapQualityReport() ở F12 console ── */
+function mapQualityReport() {
+  if(!GS.grid || !GS.gcResult || !GS.cspStats) {
+    console.warn('[MapQuality] Chưa có map. Hãy bắt đầu ít nhất 1 ván trước.');
+    return null;
+  }
+  const gc = GS.gcResult;
+  const s  = GS.cspStats;
+  const W  = CFG.W;
+  const avgNode = gc.nodeCount / gc.numColors;
+  const gcStd = +Math.sqrt(gc.distribution.reduce((acc,v)=>acc+(v-avgNode)**2,0)/gc.numColors).toFixed(2);
+  // Đếm quiz cells thực trên grid
+  let quizCnt = 0;
+  for(let i=0;i<GS.grid.length;i++) if(GS.grid[i]===CFG.T_QUIZ) quizCnt++;
+  // Min khoảng cách giữa các quái (đánh giá phân tán)
+  let monMinDist = Infinity;
+  for(let i=0;i<GS.monsters.length;i++)
+    for(let j=i+1;j<GS.monsters.length;j++)
+      monMinDist=Math.min(monMinDist,
+        Math.abs(GS.monsters[i].x-GS.monsters[j].x)+Math.abs(GS.monsters[i].y-GS.monsters[j].y));
+  // Min khoảng cách Manhattan base→treasure
+  const baseDistMan = CFG.PLAYER_BASES.slice(0,GS.players.length).map((b,i)=>({
+    player:i+1,
+    manhattan: GS.treasure?Math.abs(b.x-GS.treasure.x)+Math.abs(b.y-GS.treasure.y):-1,
+    bfs: s.fairness?s.fairness.find(f=>f.idx===i)?.dist??-1:-1,
+  }));
+  console.log('╔══════════════════════════════════════════════════');
+  console.log('║ Maze Duel BO3 – Map Quality Report (R'+GS.round+')');
+  console.log('╚══════════════════════════════════════════════════');
+  console.table({
+    '🎨 GC màu sử dụng'  : gc.numColors,
+    '🎨 GC σ phân bố'    : gcStd,
+    '🎨 GC nodes/màu TB' : (avgNode).toFixed(1),
+    '🧩 CSP thời gian'   : s.timeMs+'ms',
+    '🧩 CSP tries P0 (treasure)': s.attempts[0],
+    '🧩 CSP tries P1 (monster)' : s.attempts[1],
+    '🧩 CSP tries P2 (quiz)'    : s.attempts[2],
+    '🧩 CSP prune P0': s.backtracks[0],
+    '🧩 CSP prune P1': s.backtracks[1],
+    '🧩 CSP prune P2': s.backtracks[2],
+    '📦 Quiz cells trên map' : quizCnt,
+    '👹 Monster spread min' : isFinite(monMinDist)?monMinDist:'N/A (≤1 quái)',
+    '📐 Fairness σ (BFS)'   : s.fairnessStd??'N/A',
+  });
+  console.log('📐 BFS distances per player:', baseDistMan);
+  const full = {
+    round: GS.round,
+    graphColoring: { numColors:gc.numColors, nodeCount:gc.nodeCount,
+      distribution:[...gc.distribution], stdDev:gcStd },
+    csp: { timeMs:s.timeMs, attempts:[...s.attempts], prunedConstraints:[...s.backtracks],
+      treasureOk:s.treasureOk, monstersPlaced:s.monstersPlaced, quizPlaced:s.quizPlaced },
+    placement: { treasure:GS.treasure, quizCnt, monsterCount:GS.monsters.length,
+      monsterMinSpread:isFinite(monMinDist)?monMinDist:0 },
+    fairness: s.fairness ? { distances:baseDistMan, stdDev:s.fairnessStd } : null,
+  };
+  console.log('Full report object:', full);
+  return full;
+}
+
+let debugOn=false;
+function toggleDebug(){
+  debugOn=!debugOn;
+  document.getElementById('debug-panel').classList.toggle('show',debugOn);
+}
+function updateDebugPanel(){
+  if(!debugOn) return;
+  document.getElementById('dbg-fps').textContent=`FPS: ${fps}`;
+  document.getElementById('dbg-mode').textContent=`Mode: ${GS.mode} | Host: ${GS.isHost}`;
+  document.getElementById('dbg-players').textContent=`Players: ${GS.players.length}`;
+  document.getElementById('dbg-traps').textContent=`Traps: ${GS.traps.length}`;
+  document.getElementById('dbg-round').textContent=`Round: ${GS.round}/${CFG.BO3}`;
+  document.getElementById('dbg-seq').textContent=`Seq: ${GS.players[GS.myIdx]?.inputSeq||0}`;
+  document.getElementById('dbg-ping').textContent=`Ping: ${mqttPing}ms`;
+
+  // Thống kê graph coloring
+  const gc = GS.gcResult;
+  if(gc){
+    document.getElementById('dbg-gc-colors').textContent=`Màu: ${gc.numColors} (tối thiểu cần ${gc.numColors})`;
+    document.getElementById('dbg-gc-nodes').textContent=`Nodes: ${gc.nodeCount} floor cells`;
+    const avg = gc.nodeCount / gc.numColors;
+    const variance = gc.distribution.reduce((s,v)=>s+(v-avg)**2,0)/gc.numColors;
+    const std = Math.sqrt(variance).toFixed(1);
+    const pcts = gc.distribution.map(d=>Math.round(d/gc.nodeCount*100)+'%').join(' | ');
+    document.getElementById('dbg-gc-density').textContent=`σ=${std} | ${pcts}`;
+    const danger = computeZoneDanger(gc, GS.monsters, GS.players, GS.myIdx, CFG.W);
+    const dStr = Array.from(danger).map((d,i)=>`C${i}:${d.toFixed(1)}`).join(' ');
+    document.getElementById('dbg-gc-danger').textContent=`⚠ ${dStr||'none'}`;
+    let quizCnt=0;
+    if(GS.grid) for(let i=0;i<GS.grid.length;i++) if(GS.grid[i]===CFG.T_QUIZ) quizCnt++;
+    document.getElementById('dbg-gc-quiz').textContent=`Quiz: ${quizCnt} ô (phân tán /${gc.numColors} màu)`;
+    const monsInfo=GS.monsters.map((m,i)=>{
+      const c=gc.colorMap[m.y*CFG.W+m.x];
+      return `M${i+1}→C${c}`;
+    }).join(' ');
+    document.getElementById('dbg-gc-mons').textContent=`Quái: ${monsInfo||'none'}`;
+  } else {
+    ['dbg-gc-colors','dbg-gc-nodes','dbg-gc-density','dbg-gc-danger','dbg-gc-quiz','dbg-gc-mons']
+      .forEach(id=>{ const el=document.getElementById(id); if(el) el.textContent='Chưa có dữ liệu'; });
+  }
+
+  // Thống kê CSP
+  const con = GS.cspConstraints;
+  if(con){
+    const s = GS.cspStats;
+    const ok = s?.treasureOk ?? false;
+    document.getElementById('dbg-csp-status').textContent=
+      `${ok?'✓':'✗'} T=${ok} M=${s?.monstersPlaced??'?'}/${con.monsterCount} Q=${s?.quizPlaced??'?'}/${con.quizCount}`;
+    document.getElementById('dbg-csp-con').textContent=
+      `R${GS.round}: tDist≥${con.treasureMinDistBase} mBase≥${con.monsterMinDistBase} ` +
+      `qSpread≥${con.quizMinSpread} m=${con.monsterCount} q=${con.quizCount}`;
+    // Hiệu năng solver
+    if(s){
+      document.getElementById('dbg-csp-stats').textContent=
+        `⏱${s.timeMs}ms | tries=[${s.attempts}] prune=[${s.backtracks}]`;
+      if(s.fairness){
+        const fStr=s.fairness.map(f=>`P${f.idx+1}:${f.dist<0?'∞':f.dist}`).join(' ');
+        document.getElementById('dbg-csp-fairness').textContent=`📐 BFS ${fStr} σ=${s.fairnessStd}`;
+      } else {
+        document.getElementById('dbg-csp-fairness').textContent='Fairness: N/A';
+      }
+    } else {
+      document.getElementById('dbg-csp-stats').textContent='Stats: --';
+      document.getElementById('dbg-csp-fairness').textContent='Fairness: --';
+    }
+    // Log đầy đủ (cuộn được), 3 màu: đỏ=lỗi, xanh=ok, vàng=timing
+    document.getElementById('dbg-csp-log').innerHTML =
+      GS.cspLog.map(l=>{
+        const isFail   = l.includes('✗') || l.includes('FALLBACK');
+        const isOk     = l.includes('✓') || l.includes('📐');
+        const isTiming = l.includes('⏱');
+        const color = isFail?'#f88':isTiming?'#ffd':isOk?'#8f8':'#adf';
+        return `<div style="color:${color}">${sanitize(l)}</div>`;
+      }).join('');
+  } else {
+    ['dbg-csp-status','dbg-csp-con','dbg-csp-stats','dbg-csp-fairness'].forEach(id=>{
+      const el=document.getElementById(id); if(el) el.textContent='--';
+    });
+    document.getElementById('dbg-csp-status').textContent='Chưa có CSP run';
+    document.getElementById('dbg-csp-log').textContent='--';
+  }
+}
+function toggleGraphColoring(){
+  GS.graphColoring=!GS.graphColoring;
+  if(GS.graphColoring) buildGraphColoring();
+  showHudMsg(GS.graphColoring?'Graph coloring BẬT':'Graph coloring TẮT');
+}
+// Kích hoạt debug overlay – tái dùng gcResult đã tính trong initRound
+function buildGraphColoring(){
+  if(GS.gcResult){
+    // Tái sử dụng kết quả đã tính (không tính lại)
+    GS.graphColorMap = GS.gcResult.colorMap;
+  } else if(GS.grid){
+    // Tính mới nếu chưa có (trường hợp debug bật trước khi chơi)
+    GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
+    GS.graphColorMap = GS.gcResult.colorMap;
+  }
+}
+
+/* ================================================================
+   NETWORK – MQTT
+   ================================================================ */
+let mqttClient=null, mqttConnected=false, mqttPing=0, pingStart=0;
+let roomPlayers=[];  // danh sách người chơi trong phòng (online)
+
+function initMQTT() {
+  try {
+    mqttClient=mqtt.connect(CFG.MQTT_URL, {
+      clientId: 'mazeduel_'+Math.random().toString(36).substring(2,10),
+      reconnectPeriod: 3000, connectTimeout: 10000,
+    });
+    mqttClient.on('connect', onMqttConnect);
+    mqttClient.on('error', onMqttError);
+    mqttClient.on('offline', onMqttOffline);
+    mqttClient.on('message', onMqttMessage);
+    mqttClient.on('reconnect', ()=>setMqttStatus('conn','⚡ Đang kết nối lại...'));
+  } catch(e){ setMqttStatus('err','❌ Lỗi MQTT'); }
+}
+function onMqttConnect(){
+  mqttConnected=true;
+  setMqttStatus('ok','✅ Đã kết nối');
+  pingStart=Date.now();
+  mqttClient.publish('mazeduel/ping',JSON.stringify({t:pingStart}));
+}
+function onMqttError(e){ setMqttStatus('err','❌ Lỗi: '+e.message?.substring(0,20)); }
+function onMqttOffline(){ mqttConnected=false; setMqttStatus('err','🔌 Mất kết nối'); }
+function setMqttStatus(cls, txt){
+  ['mqtt-status','mqtt-status2'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.className=cls; el.textContent=txt;
+  });
+}
+function mqttPublish(obj){
+  if(!mqttClient||!mqttConnected||!GS.roomCode) return;
+  try { mqttClient.publish(`mazeduel/room/${GS.roomCode}`, JSON.stringify(obj)); }
+  catch(e){}
+}
+function mqttSubscribe(topic){
+  if(!mqttClient||!mqttConnected) return;
+  try { mqttClient.subscribe(topic); } catch(e){}
+}
+function mqttUnsubscribe(topic){
+  if(!mqttClient) return;
+  try { mqttClient.unsubscribe(topic); } catch(e){}
+}
+
+function onMqttMessage(topic, raw){
+  let msg;
+  try{ msg=JSON.parse(raw.toString()); }catch(e){ return; }
+  
+  // Ping response
+  if(topic==='mazeduel/ping'){ if(msg.t===pingStart) mqttPing=Date.now()-pingStart; return; }
+  
+  // Room topic
+  const roomTopic=`mazeduel/room/${GS.roomCode}`;
+  if(topic!==roomTopic) return;
+  
+  switch(msg.type){
+    case 'JOIN':      handleJoin(msg); break;
+    case 'ROOM_UPDATE': handleRoomUpdate(msg); break;
+    case 'REJECT':    handleReject(msg); break;
+    case 'INIT':      handleInit(msg); break;
+    case 'MOVE':      handleMove(msg); break;
+    case 'UPDATE':    handleUpdate(msg); break;
+    case 'MONS':      handleMons(msg); break;
+    case 'ROUND_END': handleRoundEnd(msg); break;
+    case 'NEXT_ROUND':handleNextRound(msg); break;
+    case 'MATCH_END': handleMatchEnd(msg); break;
+    case 'RETURN_LOBBY': handleReturnLobby(msg); break;
+    case 'LEAVE':     handleLeave(msg); break;
+    case 'TRAP':      handleTrapMsg(msg); break;
+    case 'REGEN_MAP': handleRegenMap(msg); break;
+  }
+}
+
+// Tạo phòng
+function createRoom(){
+  if(!mqttConnected){ alert('Chưa kết nối MQTT!'); return; }
+  const name=getPlayerName();
+  GS.roomCode=genCode();
+  GS.isHost=true;
+  GS.myIdx=0;
+  roomPlayers=[{idx:0,name,isHost:true}];
+  mqttSubscribe(`mazeduel/room/${GS.roomCode}`);
+  setupRoomScreen();
+  showScreen('room-screen');
+  document.getElementById('room-msg').textContent=`Bạn là host. Chia sẻ mã phòng: ${GS.roomCode}`;
+}
+
+// Vào phòng
+function joinRoom(){
+  if(!mqttConnected){ alert('Chưa kết nối MQTT!'); return; }
+  const code=document.getElementById('inp-room').value.trim().toUpperCase();
+  if(code.length!==4){ alert('Mã phòng phải 4 ký tự!'); return; }
+  const name=getPlayerName();
+  GS.roomCode=code;
+  GS.isHost=false;
+  mqttSubscribe(`mazeduel/room/${GS.roomCode}`);
+  mqttPublish({type:'JOIN',name});
+  showScreen('room-screen');
+  document.getElementById('room-msg').textContent='Đang tham gia phòng...';
+}
+
+// Host nhận JOIN
+function handleJoin(msg){
+  if(!GS.isHost) return;
+  if(!msg.name) return;
+  if(roomPlayers.length>=CFG.MAX_PLAYERS){
+    mqttPublish({type:'REJECT',reason:'Phòng đã đầy!'});
+    return;
+  }
+  if(GS.running){
+    mqttPublish({type:'REJECT',reason:'Trò chơi đã bắt đầu!'});
+    return;
+  }
+  const idx=roomPlayers.length;
+  roomPlayers.push({idx,name:sanitize(msg.name),isHost:false});
+  updateRoomBroadcast();
+}
+
+// Host broadcast danh sách phòng
+function updateRoomBroadcast(){
+  if(!GS.isHost) return;
+  mqttPublish({type:'ROOM_UPDATE',players:roomPlayers,roomCode:GS.roomCode});
+}
+
+// Client nhận ROOM_UPDATE
+function handleRoomUpdate(msg){
+  if(!msg.players) return;
+  roomPlayers=msg.players;
+  // Tìm idx của mình
+  const myName=getPlayerName();
+  const me=roomPlayers.find(p=>p.name===myName&&!p.isHost);
+  if(!GS.isHost && me) GS.myIdx=me.idx;
+  else if(GS.isHost) GS.myIdx=0;
+  renderRoomPlayers();
+}
+
+// Bị từ chối
+function handleReject(msg){
+  alert('Bị từ chối: '+(msg.reason||'Không vào được phòng'));
+  mqttUnsubscribe(`mazeduel/room/${GS.roomCode}`);
+  GS.roomCode='';
+  showScreen('lobby-screen');
+}
+
+// Host bắt đầu game
+function hostStartGame(){
+  if(!GS.isHost||roomPlayers.length<2) return;
+  GS.players=roomPlayers.map(p=>makePlayer(p.idx,p.name,false));
+  GS.round=1;
+  showCountdown();
+}
+
+// Client nhận INIT
+function handleInit(msg){
+  if(GS.isHost) return;
+  if(!msg.seed) return;
+  GS.round=msg.round||1;
+  if(msg.players){
+    GS.players=msg.players.map(p=>makePlayer(p.idx,p.name,false));
+    GS.players.forEach((p,i)=>{ if(msg.players[i]) p.score=msg.players[i].score||0; });
+  }
+  initRound(msg.seed, msg.players, GS.round>1);
+  showScreen('game-screen');
+  resizeCanvas();
+  startRenderLoop();
+  showHudMsg(`Ván ${GS.round} bắt đầu!`);
+}
+
+// Client gửi MOVE, Host nhận MOVE
+function handleMove(msg){
+  if(!GS.isHost) return;
+  const {pidx,dx,dy,seq}=msg;
+  if(pidx==null||!GS.players[pidx]) return;
+  if(pidx===GS.myIdx) return; // host không xử lý move của mình qua mạng
+  const p=GS.players[pidx];
+  if(typeof dx!=='number'||typeof dy!=='number') return;
+  doMovePlayer(pidx,dx,dy);
+  // Gửi ACK + state
+  broadcastState(seq);
+}
+
+// Host broadcast state
+function broadcastState(ackSeq){
+  if(!GS.isHost) return;
+  mqttPublish({
+    type:'UPDATE',
+    ack: ackSeq||0,
+    players: GS.players.map(p=>({idx:p.idx,x:p.x,y:p.y,has:p.has,stunUntil:p.stunUntil,score:p.score})),
+    treasure: GS.treasure,
+    treasureHolder: GS.treasureHolder,
+    traps: GS.traps.map(t=>({owner:t.owner,x:t.x,y:t.y,createdAt:t.createdAt,ttl:t.ttl})),
+    running: GS.running,
+  });
+}
+
+// Client nhận UPDATE
+function handleUpdate(msg){
+  if(GS.isHost) return;
+  if(msg.players){
+    for(const pd of msg.players){
+      const p=GS.players[pd.idx];
+      if(!p) continue;
+      if(pd.idx===GS.myIdx){
+        // Client-side prediction reconciliation
+        if(msg.ack){
+          p.pendingMoves=p.pendingMoves.filter(m=>m.seq>msg.ack);
+        }
+        // Apply server pos
+        p.px=p.x; p.py=p.y; p.lerpT=0;
+        p.x=pd.x; p.y=pd.y;
+        // Re-apply pending moves
+        for(const pm of p.pendingMoves){
+          const nx=p.x+pm.dx, ny=p.y+pm.dy;
+          if(nx>=0&&nx<CFG.W&&ny>=0&&ny<CFG.H&&GS.grid[ny*CFG.W+nx]!==CFG.T_WALL){
+            p.x=nx; p.y=ny;
+          }
+        }
+      } else {
+        p.px=p.x; p.py=p.y; p.lerpT=0;
+        p.x=pd.x; p.y=pd.y;
+      }
+      p.has=pd.has;
+      p.stunUntil=pd.stunUntil||0;
+      p.score=pd.score||p.score;
+    }
+  }
+  if(msg.treasure!=null) GS.treasure=msg.treasure;
+  if(msg.treasureHolder!=null) GS.treasureHolder=msg.treasureHolder;
+  if(msg.traps) GS.traps=msg.traps;
+  if(msg.running!=null) GS.running=msg.running;
+}
+
+// Monster sync
+function handleMons(msg){
+  if(GS.isHost||!msg.mons) return;
+  for(let i=0;i<msg.mons.length&&i<GS.monsters.length;i++){
+    const m=GS.monsters[i];
+    m.px=m.x; m.py=m.y; m.lerpT=0;
+    m.x=msg.mons[i].x; m.y=msg.mons[i].y;
+  }
+}
+
+// Kết thúc ván từ host
+function handleRoundEnd(msg){
+  if(GS.isHost) return;
+  if(msg.scores) msg.scores.forEach((s,i)=>{ if(GS.players[i]) GS.players[i].score=s; });
+  GS.running=false;
+  showRoundEnd(msg.winner);
+}
+
+function handleNextRound(msg){
+  if(GS.isHost) return;
+  GS.round=msg.round||GS.round+1;
+  showCountdown();
+}
+
+function handleMatchEnd(msg){
+  if(GS.isHost) return;
+  showMatchEnd(msg.winner);
+}
+
+function handleReturnLobby(msg){
+  if(GS.isHost) return;
+  clearGameIntervals();
+  stopRenderLoop();
+  setupRoomScreen();
+  showScreen('room-screen');
+}
+
+function handleLeave(msg){
+  if(!GS.isHost) return;
+  roomPlayers=roomPlayers.filter(p=>p.idx!==msg.idx);
+  updateRoomBroadcast();
+}
+
+function handleTrapMsg(msg){
+  if(GS.isHost) return;
+  if(msg.traps) GS.traps=msg.traps;
+}
+
+// Client nhận tín hiệu host tái sinh map
+function handleRegenMap(msg){
+  if(GS.isHost) return;
+  if(!msg.seed) return;
+  GS.seed = msg.seed;
+  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed);
+  GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
+  GS.graphColorMap = GS.gcResult.colorMap;
+  const cspRng = mkRng(GS.seed ^ 0xDEAD);
+  const numP = Math.max(2, GS.players.length);
+  const cspResult = cspSolve(GS.grid, GS.gcResult, GS.round, numP, cspRng, CFG.W, CFG.H);
+  for (const qp of cspResult.quizCells) {
+    if (GS.grid[qp.y*CFG.W+qp.x] === CFG.T_FLOOR)
+      GS.grid[qp.y*CFG.W+qp.x] = CFG.T_QUIZ;
+  }
+  // Quái vật sẽ được đồng bộ qua MONS từ host, chỉ reset trước
+  GS.monsters = cspResult.monsters.map(pos => makeMonster(pos.x, pos.y));
+  GS.traps = [];
+  // Kiểm tra người chơi bị kẹt trong tường
+  for (const p of GS.players) {
+    if (GS.grid[p.y*CFG.W+p.x] === CFG.T_WALL) {
+      let best=null, bd=9999;
+      for(let y=1;y<CFG.H-1;y++) for(let x=1;x<CFG.W-1;x++) {
+        if(GS.grid[y*CFG.W+x]===CFG.T_WALL) continue;
+        const d=Math.abs(x-p.x)+Math.abs(y-p.y);
+        if(d<bd){bd=d;best={x,y};}
+      }
+      if(best){p.px=p.x;p.py=p.y;p.lerpT=0;p.x=best.x;p.y=best.y;}
+    }
+  }
+  showHudMsg('⚡ Bản đồ thay đổi! 🗺️', 2500);
+}
+
+// Rời phòng
+function leaveRoom(){
+  if(GS.roomCode){
+    mqttPublish({type:'LEAVE',idx:GS.myIdx});
+    mqttUnsubscribe(`mazeduel/room/${GS.roomCode}`);
+  }
+  GS.roomCode='';
+  GS.isHost=false;
+  roomPlayers=[];
+  clearGameIntervals();
+  stopRenderLoop();
+  showScreen('lobby-screen');
+}
+
+/* ================================================================
+   ROOM SCREEN UI
+   ================================================================ */
+function setupRoomScreen(){
+  const code=document.getElementById('room-code-lbl');
+  if(code) code.textContent=GS.roomCode||'----';
+  renderRoomPlayers();
+}
+
+function renderRoomPlayers(){
+  const ul=document.getElementById('room-players');
+  const cnt=document.getElementById('room-count');
+  if(!ul) return;
+  ul.innerHTML='';
+  if(cnt) cnt.textContent=roomPlayers.length;
+  for(const p of roomPlayers){
+    const li=document.createElement('li');
+    const dot=document.createElement('span');
+    dot.className='dot';
+    dot.style.background=CFG.PLAYER_COLORS[p.idx%4];
+    li.appendChild(dot);
+    const name=document.createElement('span');
+    name.textContent=sanitize(p.name);
+    li.appendChild(name);
+    if(p.isHost){ const t=document.createElement('span'); t.className='tag host'; t.textContent='HOST'; li.appendChild(t); }
+    if(p.idx===GS.myIdx&&!p.isHost){ const t=document.createElement('span'); t.className='tag you'; t.textContent='BẠN'; li.appendChild(t); }
+    ul.appendChild(li);
+  }
+  const btn=document.getElementById('btn-start-room');
+  if(btn){
+    btn.style.display=GS.isHost&&roomPlayers.length>=2?'inline-flex':'none';
+  }
+}
+
+/* ================================================================
+   INIT – khởi động app
+   ================================================================ */
+window.addEventListener('load', ()=>{
+  showScreen('lobby-screen');
+  initMQTT();
+  resizeCanvas();
+});
+
+// Expose touch controls
+window.touchDir=touchDir;
+window.touchRelease=touchRelease;
+window.startOfflineFlow=startOfflineFlow;
+window.selectDiff=selectDiff;
+window.confirmDiff=confirmDiff;
+window.showScreen=showScreen;
+window.createRoom=createRoom;
+window.joinRoom=joinRoom;
+window.hostStartGame=hostStartGame;
+window.leaveRoom=leaveRoom;
+window.backToLobby=backToLobby;
+window.mapQualityReport=mapQualityReport;
+</script>
+</body>
+</html>
