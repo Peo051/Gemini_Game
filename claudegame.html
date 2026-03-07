@@ -1605,9 +1605,9 @@ function cspCheckMonster(pos, idx, assigned, constraints, bases, baseDistMaps, W
     if (d < constraints.monsterMinDistTreasure)
       return { ok:false, reason:`✗ mon${idx}_too_close_treasure d=${d}` };
   }
-  // Phải cách quái khác đủ xa (forward checking trên assigned monsters)
-  for (let k = 0; k < idx; k++) {
-    if (!assigned.monsters[k]) continue;
+  // Phải cách quái khác đủ xa (không phụ thuộc thứ tự gán biến)
+  for (let k = 0; k < assigned.monsters.length; k++) {
+    if (k === idx || !assigned.monsters[k]) continue;
     const d = manhattan(pos, assigned.monsters[k]);
     if (d < constraints.monsterMinDistEach)
       return { ok:false, reason:`✗ mon${idx}_too_close_mon${k} d=${d}` };
@@ -1630,9 +1630,9 @@ function cspCheckQuiz(pos, idx, assigned, constraints, bases) {
     if (manhattan(pos, b) < constraints.quizMinDistBase)
       return { ok:false, reason:`✗ quiz${idx}_too_close_base` };
   }
-  // Phân tán: cách quiz đã đặt đủ xa (forward checking)
-  for (let k = 0; k < idx; k++) {
-    if (!assigned.quizzes[k]) continue;
+  // Phân tán: cách quiz đã đặt đủ xa (không phụ thuộc thứ tự gán biến)
+  for (let k = 0; k < assigned.quizzes.length; k++) {
+    if (k === idx || !assigned.quizzes[k]) continue;
     const d = manhattan(pos, assigned.quizzes[k]);
     if (d < constraints.quizMinSpread)
       return { ok:false, reason:`✗ quiz${idx}_too_close_quiz${k} d=${d}<${constraints.quizMinSpread}` };
@@ -1720,181 +1720,378 @@ function cspSolve(grid, gcResult, round, numPlayers, rng, W, H) {
   const bases = CFG.PLAYER_BASES.slice(0, numPlayers);
   const baseDistMaps = bases.map(b => bfsDistanceMap(grid, b.x, b.y, W, H));
   const log = [];
-  // attempts[phase]: tổng số ô được kiểm tra mỗi phase (P0=treasure, P1=monster, P2=quiz)
   const attempts = [0, 0, 0];
-  // bcks[phase]: số lần constraint bị vi phạm → pruning event (dùng cho báo cáo)
-  const bcks    = [0, 0, 0];
-  let totalAttempts = 0; // dùng nội bộ per-variable trong phase 2 & 3
+  const bcks = [0, 0, 0];
+  const pruneReasons = { treasure:{}, monster:{}, quiz:{} };
+  let fallbackCount = 0;
 
-  // ── Build full domain: tất cả floor/quiz cells ──
   const allFloor = [];
-  for (let y = 1; y < H-1; y++)
-    for (let x = 1; x < W-1; x++)
+  for (let y = 1; y < H-1; y++) {
+    for (let x = 1; x < W-1; x++) {
       if (grid[y*W+x] !== CFG.T_WALL) allFloor.push({x, y});
-  log.push(`Domain: ${allFloor.length} floor cells | R${round} players=${numPlayers}`);
+    }
+  }
 
-  // Assigned state (forward checking tích hợp qua usedSet)
+  const varCount = 1 + constraints.monsterCount + constraints.quizCount;
+  log.push(`CSP Vars=${varCount} | Domain0=${allFloor.length} | R${round} P=${numPlayers}`);
+
   const assigned = {
     treasure: null,
     monsters: new Array(constraints.monsterCount).fill(null),
-    quizzes:  new Array(constraints.quizCount).fill(null),
-    usedSet:  new Set(),
+    quizzes: new Array(constraints.quizCount).fill(null),
+    usedSet: new Set(),
   };
 
-  // ════════════════════════════════════════════════════
-  // PHASE 1: TreasurePos
-  // Domain: cells đủ xa base, gần trung tâm (MRV: biến bị ràng buộc nhiều nhất)
-  // LCV: thử ô có nhiều floor-neighbors nhất trước
-  // ════════════════════════════════════════════════════
-  const treeDomain = shuffleRng(
+  const cx = Math.floor(W / 2), cy = Math.floor(H / 2);
+
+  // Phase 1: Treasure with fairness/anti-camping as hard constraints, soft-score choose best valid.
+  const treasureDomain = shuffleRng(
     lcvOrder(
       allFloor.filter(p => bases.every(b => manhattan(p, b) >= constraints.treasureMinDistBase)),
       grid, W, H
     ),
     rng
   );
-  log.push(`TreasureDomain: ${treeDomain.length} candidates`);
+  log.push(`TreasureDomain0=${treasureDomain.length}`);
 
   let treasureOk = false;
-  for (const pos of treeDomain) {
+  let bestTreasure = null;
+  for (const pos of treasureDomain) {
     attempts[0]++;
-    if (attempts[0] > constraints.maxAttempts) break;
+    if (attempts[0] > constraints.maxAttempts * 3) break;
+
     const chk = cspCheckTreasure(pos, bases, constraints, grid, W, H);
-    if (chk.ok) {
-      assigned.treasure = pos;
-      assigned.usedSet.add(`${pos.x},${pos.y}`);
-      treasureOk = true;
-      log.push(`✓ Treasure→(${pos.x},${pos.y}) [thử=${attempts[0]} prune=${bcks[0]}]`);
-      break;
-    } else { bcks[0]++; }
+    if (!chk.ok) {
+      bcks[0]++; bumpReason(pruneReasons, 'treasure', chk.reason);
+      continue;
+    }
+
+    const fair = calcTreasureFairnessMetrics(pos, baseDistMaps, W);
+    if (!fair) {
+      bcks[0]++; bumpReason(pruneReasons, 'treasure', 'treasure_unreachable_distmap');
+      continue;
+    }
+    if (fair.std > constraints.treasureFairnessStdMax) {
+      bcks[0]++; bumpReason(pruneReasons, 'treasure', 'treasure_fairness_std');
+      continue;
+    }
+    if (fair.lead > constraints.treasureFairnessLeadMax) {
+      bcks[0]++; bumpReason(pruneReasons, 'treasure', 'treasure_fairness_lead');
+      continue;
+    }
+    if (fair.lead > constraints.treasureAntiCampLeadMax) {
+      bcks[0]++; bumpReason(pruneReasons, 'treasure', 'treasure_anti_camping');
+      continue;
+    }
+
+    const centerBias = Math.abs(pos.x - cx) + Math.abs(pos.y - cy);
+    const score =
+      - fair.std * 18
+      - fair.lead * 6
+      + fair.min * 0.6
+      - centerBias * 0.25
+      + neighbors4(pos.x, pos.y, W, H).filter(n => grid[n.y*W+n.x] !== CFG.T_WALL).length * 1.2;
+
+    if (!bestTreasure || score > bestTreasure.score) {
+      bestTreasure = { pos, score, fair };
+    }
   }
-  if (!treasureOk) {
-    // Fallback: lấy ô floor gần tâm nhất, tránh trùng base
-    const fb = allFloor.find(p => !bases.some(b=>b.x===p.x&&b.y===p.y));
+
+  if (bestTreasure) {
+    assigned.treasure = bestTreasure.pos;
+    assigned.usedSet.add(`${bestTreasure.pos.x},${bestTreasure.pos.y}`);
+    treasureOk = true;
+    log.push(
+      `✓ Treasure→(${bestTreasure.pos.x},${bestTreasure.pos.y}) ` +
+      `fair[σ=${bestTreasure.fair.std},lead=${bestTreasure.fair.lead}] score=${bestTreasure.score.toFixed(2)}`
+    );
+  } else {
+    fallbackCount++;
+    const fb = allFloor.find(p => !bases.some(b => b.x===p.x && b.y===p.y));
     assigned.treasure = fb || findTreasurePosFallback(grid, W, H);
     assigned.usedSet.add(`${assigned.treasure.x},${assigned.treasure.y}`);
     log.push(`⚠ Treasure FALLBACK→(${assigned.treasure.x},${assigned.treasure.y})`);
   }
 
-  // ════════════════════════════════════════════════════
-  // PHASE 2: MonsterPos[0..M-1]
-  // Backtracking đơn giản, forward checking qua assigned.usedSet + distance checks
-  // MRV: đặt quái trước vì domain nhỏ hơn quiz (bị ràng buộc nhiều hơn)
-  // ════════════════════════════════════════════════════
+  // Phase 2: Monster placement with MRV + Degree + Forward checking + pressure balancing.
   const monBaseDomain = shuffleRng(
     allFloor.filter(p => bases.every(b => manhattan(p, b) >= constraints.monsterMinDistBase)),
     rng
   );
-  log.push(`MonsterDomain: ${monBaseDomain.length} candidates`);
+  log.push(`MonsterDomain0=${monBaseDomain.length}`);
 
-  for (let mi = 0; mi < constraints.monsterCount; mi++) {
-    let placed = false;
-    totalAttempts = 0;
-    for (const pos of monBaseDomain) {
-      attempts[1]++; if (++totalAttempts > constraints.maxAttempts) break;
-      const chk = cspCheckMonster(pos, mi, assigned, constraints, bases, baseDistMaps, W, H);
-      if (chk.ok) {
-        assigned.monsters[mi] = pos;
-        assigned.usedSet.add(`${pos.x},${pos.y}`);
-        placed = true;
-        log.push(`✓ Monster[${mi}]→(${pos.x},${pos.y})`);
-        break;
-      } else { bcks[1]++; }
+  const pressureCount = new Array(bases.length).fill(0);
+  const monIds = Array.from({ length: constraints.monsterCount }, (_, i) => i);
+
+  const basePressureHit = (pos, bi) => {
+    const d = baseDistMaps[bi][pos.y * W + pos.x];
+    return d >= 0 && d <= constraints.monsterBasePressureRadius;
+  };
+
+  const canPlaceMonster = (pos, mi) => {
+    const chk = cspCheckMonster(pos, mi, assigned, constraints, bases, baseDistMaps, W, H);
+    if (!chk.ok) return { ok:false, reason: chk.reason };
+    for (let bi = 0; bi < bases.length; bi++) {
+      if (basePressureHit(pos, bi) && pressureCount[bi] + 1 > constraints.monsterMaxPressurePerBase) {
+        return { ok:false, reason:'monster_pressure_cap' };
+      }
     }
-    if (!placed) {
-      // Fallback an toàn: vẫn giữ ràng buộc base-distance/path để tránh loop về base.
-      const fb = allFloor.find(p =>
-        cspCheckMonster(p, mi, assigned, constraints, bases, baseDistMaps, W, H).ok
-      );
+    return { ok:true, reason:'monster_ok' };
+  };
+
+  const monsterDomainForVar = (mi) => {
+    const domain = [];
+    for (const pos of monBaseDomain) {
+      if (assigned.usedSet.has(`${pos.x},${pos.y}`)) continue;
+      attempts[1]++;
+      const ok = canPlaceMonster(pos, mi);
+      if (ok.ok) domain.push(pos);
+      else { bcks[1]++; bumpReason(pruneReasons, 'monster', ok.reason); }
+    }
+    return domain;
+  };
+
+  const monsterValueScore = (mi, pos) => {
+    const toTre = manhattan(pos, assigned.treasure);
+    let spreadMin = 999;
+    for (const m of assigned.monsters) if (m) spreadMin = Math.min(spreadMin, manhattan(pos, m));
+    if (!isFinite(spreadMin)) spreadMin = constraints.monsterMinDistEach;
+
+    const localPressure = pressureCount.map((c, bi) => c + (basePressureHit(pos, bi) ? 1 : 0));
+    const pStd = stdDev(localPressure);
+    const targetBase = bases[mi % bases.length];
+    const targetBias = Math.abs(pos.x - targetBase.x) + Math.abs(pos.y - targetBase.y);
+    return (
+      spreadMin * 3.1
+      + toTre * 0.75
+      - pStd * 12
+      - targetBias * 0.12
+    );
+  };
+
+  const searchMonster = (remainingIds) => {
+    if (!remainingIds.length) return true;
+
+    const domains = {};
+    for (const id of remainingIds) {
+      domains[id] = monsterDomainForVar(id);
+      if (!domains[id].length) {
+        bumpReason(pruneReasons, 'monster', 'fc_empty_domain');
+        return false;
+      }
+    }
+
+    const degreeMap = {};
+    for (const id of remainingIds) degreeMap[id] = remainingIds.length - 1;
+    const pickId = selectVarByMrvDegree(remainingIds, domains, degreeMap);
+    const rest = remainingIds.filter(v => v !== pickId);
+    const ordered = domains[pickId]
+      .map(p => ({ p, s: monsterValueScore(pickId, p) }))
+      .sort((a,b)=>b.s-a.s)
+      .slice(0, constraints.maxAttempts)
+      .map(x => x.p);
+
+    for (const pos of ordered) {
+      assigned.monsters[pickId] = pos;
+      assigned.usedSet.add(`${pos.x},${pos.y}`);
+      const inc = [];
+      for (let bi = 0; bi < bases.length; bi++) {
+        if (basePressureHit(pos, bi)) { pressureCount[bi]++; inc.push(bi); }
+      }
+
+      // Forward checking explicit: mọi biến còn lại phải còn miền hợp lệ.
+      let fcOk = true;
+      for (const rid of rest) {
+        const d = monsterDomainForVar(rid);
+        if (!d.length) { fcOk = false; bumpReason(pruneReasons, 'monster', 'fc_wipeout'); break; }
+      }
+
+      if (fcOk && searchMonster(rest)) return true;
+
+      for (const bi of inc) pressureCount[bi]--;
+      assigned.monsters[pickId] = null;
+      assigned.usedSet.delete(`${pos.x},${pos.y}`);
+    }
+    return false;
+  };
+
+  const monSolved = searchMonster(monIds);
+  if (!monSolved) {
+    for (let mi = 0; mi < constraints.monsterCount; mi++) {
+      if (assigned.monsters[mi]) continue;
+      const fb = monBaseDomain.find(pos => {
+        if (assigned.usedSet.has(`${pos.x},${pos.y}`)) return false;
+        return cspCheckMonster(pos, mi, assigned, constraints, bases, baseDistMaps, W, H).ok;
+      });
       if (fb) {
+        fallbackCount++;
         assigned.monsters[mi] = fb;
         assigned.usedSet.add(`${fb.x},${fb.y}`);
+        for (let bi = 0; bi < bases.length; bi++) if (basePressureHit(fb, bi)) pressureCount[bi]++;
         log.push(`⚠ Monster[${mi}] FALLBACK→(${fb.x},${fb.y})`);
-      } else {
-        log.push(`✗ Monster[${mi}] UNPLACED (base-safe domain exhausted)`);
       }
     }
   }
 
-  // ════════════════════════════════════════════════════
-  // PHASE 3: QuizPos[0..N-1]
-  // Forward checking: loại ô đã dùng ngay lập tức (usedSet)
-  // Interleave theo graph-coloring groups: phân tán đều các vùng
-  // ════════════════════════════════════════════════════
+  // Phase 3: Quiz placement with MRV+Degree, color-balance and forward checking.
   const gcMap = gcResult ? gcResult.colorMap : null;
-  const numColors = gcResult ? gcResult.numColors : 1;
+  const numColors = Math.max(gcResult ? gcResult.numColors : 1, 1);
+  const colorCap = Math.ceil(constraints.quizCount / numColors) + constraints.quizColorBalanceSlack;
   const quizBaseDomain = allFloor.filter(p =>
     !bases.some(b => b.x===p.x && b.y===p.y) &&
     bases.every(b => manhattan(p,b) >= constraints.quizMinDistBase)
   );
+  log.push(`QuizDomain0=${quizBaseDomain.length} colors=${numColors}`);
 
-  // Nhóm quiz candidates theo màu GC, shuffle từng nhóm
-  const colorBuckets = Array.from({length: Math.max(numColors,1)}, () => []);
-  for (const p of quizBaseDomain) {
-    const c = (gcMap && gcMap[p.y*W+p.x] >= 0) ? gcMap[p.y*W+p.x] : 0;
-    colorBuckets[c % colorBuckets.length].push(p);
-  }
-  for (let c = 0; c < colorBuckets.length; c++)
-    colorBuckets[c] = shuffleRng(colorBuckets[c], rng);
+  const colorUse = new Array(numColors).fill(0);
+  const qIds = Array.from({ length: constraints.quizCount }, (_, i) => i);
 
-  // Interleave round-robin: C0[0], C1[0], C2[0], C0[1], C1[1]...
-  const interleaved = [];
-  const bucketPtrs = new Array(colorBuckets.length).fill(0);
-  let added = 0;
-  while (added < quizBaseDomain.length) {
-    let anyAdded = false;
-    for (let c = 0; c < colorBuckets.length; c++) {
-      if (bucketPtrs[c] < colorBuckets[c].length) {
-        interleaved.push(colorBuckets[c][bucketPtrs[c]++]);
-        anyAdded = true; added++;
-      }
-    }
-    if (!anyAdded) break;
-  }
-  log.push(`QuizDomain: ${quizBaseDomain.length} (interleaved: ${interleaved.length} across ${numColors} colors)`);
+  const colorOf = (p) => {
+    const c = (gcMap && gcMap[p.y * W + p.x] >= 0) ? gcMap[p.y * W + p.x] : 0;
+    return c % numColors;
+  };
 
-  for (let qi = 0; qi < constraints.quizCount; qi++) {
-    let placed = false;
-    totalAttempts = 0;
-    for (const pos of interleaved) {
-      attempts[2]++; if (++totalAttempts > constraints.maxAttempts * 2) break;
-      if (assigned.usedSet.has(`${pos.x},${pos.y}`)) continue; // forward check
+  const quizDomainForVar = (qi) => {
+    const preferredColor = qi % numColors;
+    const primary = [];
+    const secondary = [];
+    for (const pos of quizBaseDomain) {
+      if (assigned.usedSet.has(`${pos.x},${pos.y}`)) continue;
+      attempts[2]++;
       const chk = cspCheckQuiz(pos, qi, assigned, constraints, bases);
-      if (chk.ok) {
-        assigned.quizzes[qi] = pos;
-        assigned.usedSet.add(`${pos.x},${pos.y}`);
-        placed = true;
-        break;
-      } else { bcks[2]++; }
+      if (!chk.ok) { bcks[2]++; bumpReason(pruneReasons, 'quiz', chk.reason); continue; }
+      const col = colorOf(pos);
+      if (colorUse[col] >= colorCap) { bcks[2]++; bumpReason(pruneReasons, 'quiz', 'quiz_color_cap'); continue; }
+      if (col === preferredColor) primary.push(pos);
+      else secondary.push(pos);
     }
-    if (!placed) {
-      // Relaxed fallback: chỉ cần AllDifferent, bỏ quizMinSpread
-      const fb = interleaved.find(p =>
-        !assigned.usedSet.has(`${p.x},${p.y}`) &&
-        !bases.some(b=>b.x===p.x&&b.y===p.y)
-      );
+    return primary.concat(secondary);
+  };
+
+  const quizValueScore = (qi, pos) => {
+    const col = colorOf(pos);
+    let spreadMin = 999;
+    for (const q of assigned.quizzes) if (q) spreadMin = Math.min(spreadMin, manhattan(pos, q));
+    if (!isFinite(spreadMin)) spreadMin = constraints.quizMinSpread;
+    const deficit = Math.max(0, colorCap - colorUse[col]);
+    const dTre = assigned.treasure ? manhattan(pos, assigned.treasure) : 0;
+    return spreadMin * 2.4 + deficit * 3.5 + dTre * 0.35;
+  };
+
+  const searchQuiz = (remainingIds) => {
+    if (!remainingIds.length) return true;
+
+    const domains = {};
+    for (const id of remainingIds) {
+      domains[id] = quizDomainForVar(id);
+      if (!domains[id].length) { bumpReason(pruneReasons, 'quiz', 'fc_empty_domain'); return false; }
+    }
+
+    const degreeMap = {};
+    for (const id of remainingIds) {
+      const preferredColor = id % numColors;
+      degreeMap[id] = (remainingIds.length - 1) + (colorUse[preferredColor] >= colorCap ? 2 : 0);
+    }
+    const pickId = selectVarByMrvDegree(remainingIds, domains, degreeMap);
+    const rest = remainingIds.filter(v => v !== pickId);
+    const ordered = domains[pickId]
+      .map(p => ({ p, s: quizValueScore(pickId, p) }))
+      .sort((a,b)=>b.s-a.s)
+      .slice(0, constraints.maxAttempts * 2)
+      .map(x => x.p);
+
+    for (const pos of ordered) {
+      const col = colorOf(pos);
+      assigned.quizzes[pickId] = pos;
+      assigned.usedSet.add(`${pos.x},${pos.y}`);
+      colorUse[col]++;
+
+      let fcOk = true;
+      for (const rid of rest) {
+        const d = quizDomainForVar(rid);
+        if (!d.length) { fcOk = false; bumpReason(pruneReasons, 'quiz', 'fc_wipeout'); break; }
+      }
+
+      if (fcOk && searchQuiz(rest)) return true;
+
+      colorUse[col]--;
+      assigned.quizzes[pickId] = null;
+      assigned.usedSet.delete(`${pos.x},${pos.y}`);
+    }
+    return false;
+  };
+
+  const quizSolved = searchQuiz(qIds);
+  if (!quizSolved) {
+    for (let qi = 0; qi < constraints.quizCount; qi++) {
+      if (assigned.quizzes[qi]) continue;
+      const fb = quizBaseDomain.find(p => {
+        if (assigned.usedSet.has(`${p.x},${p.y}`)) return false;
+        return !bases.some(b => b.x===p.x&&b.y===p.y);
+      });
       if (fb) {
+        fallbackCount++;
         assigned.quizzes[qi] = fb;
         assigned.usedSet.add(`${fb.x},${fb.y}`);
-        log.push(`⚠ Quiz[${qi}] FALLBACK (relaxed spread)`);
+        colorUse[colorOf(fb)]++;
+        log.push(`⚠ Quiz[${qi}] FALLBACK (relaxed)`);
       }
     }
   }
 
   const finalMons = assigned.monsters.filter(Boolean);
   const finalQuiz = assigned.quizzes.filter(Boolean);
+  const treasureFair = assigned.treasure ? calcTreasureFairnessMetrics(assigned.treasure, baseDistMaps, W) : null;
+  const monPressureStd = +stdDev(pressureCount).toFixed(2);
+  const quizColorStd = +stdDev(colorUse).toFixed(2);
+  const fairnessScore = Math.max(
+    0,
+    Math.round(
+      ((treasureFair ? (100 - treasureFair.std * 12 - treasureFair.lead * 6) : 40)
+      + (100 - monPressureStd * 25)
+      + (100 - quizColorStd * 30)) / 3
+    )
+  );
+
+  const topT = topPruneReason(pruneReasons, 'treasure');
+  const topM = topPruneReason(pruneReasons, 'monster');
+  const topQ = topPruneReason(pruneReasons, 'quiz');
+
   const stats = {
     timeMs: +(performance.now() - t0).toFixed(2),
-    attempts,             // [P0tries, P1tries, P2tries]
-    backtracks: bcks,     // [P0prune, P1prune, P2prune]
+    attempts,
+    backtracks: bcks,
     treasureOk,
     monstersPlaced: finalMons.length,
     quizPlaced: finalQuiz.length,
+    fallbackCount,
+    fairnessScore,
+    pruneTop: {
+      treasure: topT,
+      monster: topM,
+      quiz: topQ,
+    },
+    pruneReasons,
+    domainSizes: {
+      allFloor: allFloor.length,
+      treasure: treasureDomain.length,
+      monster: monBaseDomain.length,
+      quiz: quizBaseDomain.length,
+    },
+    pressurePerBase: pressureCount,
+    quizColorUse: colorUse,
   };
+
+  log.push(
+    `CSPStats vars=${varCount} domain0=${allFloor.length} prune=[${bcks}] fallback=${fallbackCount} fairness=${fairnessScore}`
+  );
+  log.push(`TopPrune T=${topT.key}:${topT.count} | M=${topM.key}:${topM.count} | Q=${topQ.key}:${topQ.count}`);
+  if (treasureFair) {
+    log.push(`TreasureFair σ=${treasureFair.std} lead=${treasureFair.lead} min=${treasureFair.min} max=${treasureFair.max}`);
+  }
   log.push(
     `✓ CSP R${round}: T=${treasureOk} M=${finalMons.length}/${constraints.monsterCount} ` +
-    `Q=${finalQuiz.length}/${constraints.quizCount} | ` +
-    `⏱${stats.timeMs}ms tries=[${attempts}] prune=[${bcks}]`
+    `Q=${finalQuiz.length}/${constraints.quizCount} | ⏱${stats.timeMs}ms tries=[${attempts}] prune=[${bcks}]`
   );
 
   return {
