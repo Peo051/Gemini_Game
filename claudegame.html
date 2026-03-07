@@ -1680,6 +1680,461 @@ function monsterAssignmentReport() {
 }
 
 /* ================================================================
+   OFFLINE OPTIMIZER MODULE (for AI coursework experiments)
+   Chỉ chạy khi gọi từ console/debug. Không dùng trong game loop realtime.
+   ================================================================ */
+const OPT_DEFAULT_CONFIG = Object.freeze({
+  LOOP_ADD_RATIO: 0.12,
+  DEAD_END_PASSES: 2,
+  monsterCount: 4,
+  quizCount: 10,
+  treasureMinDistBase: 10,
+  monsterMinDistBase: 6,
+  quizMinSpread: 4,
+  dangerWeight: 1.0,
+  samplesPerRound: 3,
+  numPlayers: 2,
+  seedBase: 730001,
+});
+
+const OPT_BOUNDS = Object.freeze({
+  LOOP_ADD_RATIO: [0.03, 0.24],
+  DEAD_END_PASSES: [0, 4],
+  monsterCount: [3, 10],
+  quizCount: [6, 16],
+  treasureMinDistBase: [8, 17],
+  monsterMinDistBase: [4, 10],
+  quizMinSpread: [1, 6],
+  dangerWeight: [0.3, 2.5],
+});
+
+function _optClamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function _optRandRange(lo, hi) { return lo + Math.random() * (hi - lo); }
+function _optRound(v, digits = 2) {
+  const p = Math.pow(10, digits);
+  return Math.round(v * p) / p;
+}
+
+function normalizeOptimizerConfig(cfg = {}) {
+  const c = { ...OPT_DEFAULT_CONFIG, ...(cfg || {}) };
+  c.LOOP_ADD_RATIO = _optRound(_optClamp(c.LOOP_ADD_RATIO, ...OPT_BOUNDS.LOOP_ADD_RATIO), 3);
+  c.DEAD_END_PASSES = Math.round(_optClamp(c.DEAD_END_PASSES, ...OPT_BOUNDS.DEAD_END_PASSES));
+  c.monsterCount = Math.round(_optClamp(c.monsterCount, ...OPT_BOUNDS.monsterCount));
+  c.quizCount = Math.round(_optClamp(c.quizCount, ...OPT_BOUNDS.quizCount));
+  c.treasureMinDistBase = Math.round(_optClamp(c.treasureMinDistBase, ...OPT_BOUNDS.treasureMinDistBase));
+  c.monsterMinDistBase = Math.round(_optClamp(c.monsterMinDistBase, ...OPT_BOUNDS.monsterMinDistBase));
+  c.quizMinSpread = Math.round(_optClamp(c.quizMinSpread, ...OPT_BOUNDS.quizMinSpread));
+  c.dangerWeight = _optRound(_optClamp(c.dangerWeight, ...OPT_BOUNDS.dangerWeight), 2);
+  c.samplesPerRound = Math.max(1, Math.min(8, Math.round(c.samplesPerRound || OPT_DEFAULT_CONFIG.samplesPerRound)));
+  c.numPlayers = Math.max(2, Math.min(4, Math.round(c.numPlayers || OPT_DEFAULT_CONFIG.numPlayers)));
+  c.seedBase = Math.round(c.seedBase || OPT_DEFAULT_CONFIG.seedBase);
+  return c;
+}
+
+function _randomOptimizerConfig(base = OPT_DEFAULT_CONFIG) {
+  const c = { ...base };
+  c.LOOP_ADD_RATIO = _optRandRange(...OPT_BOUNDS.LOOP_ADD_RATIO);
+  c.DEAD_END_PASSES = ri(OPT_BOUNDS.DEAD_END_PASSES[0], OPT_BOUNDS.DEAD_END_PASSES[1] + 1);
+  c.monsterCount = ri(OPT_BOUNDS.monsterCount[0], OPT_BOUNDS.monsterCount[1] + 1);
+  c.quizCount = ri(OPT_BOUNDS.quizCount[0], OPT_BOUNDS.quizCount[1] + 1);
+  c.treasureMinDistBase = ri(OPT_BOUNDS.treasureMinDistBase[0], OPT_BOUNDS.treasureMinDistBase[1] + 1);
+  c.monsterMinDistBase = ri(OPT_BOUNDS.monsterMinDistBase[0], OPT_BOUNDS.monsterMinDistBase[1] + 1);
+  c.quizMinSpread = ri(OPT_BOUNDS.quizMinSpread[0], OPT_BOUNDS.quizMinSpread[1] + 1);
+  c.dangerWeight = _optRandRange(...OPT_BOUNDS.dangerWeight);
+  return normalizeOptimizerConfig(c);
+}
+
+function _mutateOptimizerConfig(cfg, magnitude = 1) {
+  const c = { ...cfg };
+  if (Math.random() < 0.8) c.LOOP_ADD_RATIO += (Math.random() * 0.04 - 0.02) * magnitude;
+  if (Math.random() < 0.7) c.DEAD_END_PASSES += ri(-1, 2);
+  if (Math.random() < 0.7) c.monsterCount += ri(-1, 2);
+  if (Math.random() < 0.7) c.quizCount += ri(-2, 3);
+  if (Math.random() < 0.6) c.treasureMinDistBase += ri(-2, 3);
+  if (Math.random() < 0.6) c.monsterMinDistBase += ri(-1, 2);
+  if (Math.random() < 0.6) c.quizMinSpread += ri(-1, 2);
+  if (Math.random() < 0.7) c.dangerWeight += (Math.random() * 0.6 - 0.3) * magnitude;
+  return normalizeOptimizerConfig(c);
+}
+
+function _crossoverOptimizerConfig(a, b) {
+  const child = { ...a };
+  const keys = ['LOOP_ADD_RATIO','DEAD_END_PASSES','monsterCount','quizCount','treasureMinDistBase','monsterMinDistBase','quizMinSpread','dangerWeight'];
+  for (const k of keys) {
+    if (Math.random() < 0.5) child[k] = b[k];
+    else if (Math.random() < 0.22) child[k] = (a[k] + b[k]) / 2;
+  }
+  return normalizeOptimizerConfig(child);
+}
+
+function _buildOptimizerRoundOverrides(cfg, round) {
+  return {
+    monsterCount: Math.max(2, Math.round(cfg.monsterCount + (round - 1) * 2)),
+    quizCount: Math.max(3, Math.round(cfg.quizCount)),
+    treasureMinDistBase: Math.max(5, Math.round(cfg.treasureMinDistBase + (round - 1) * 2)),
+    monsterMinDistBase: Math.max(3, Math.round(cfg.monsterMinDistBase + (round - 1))),
+    quizMinSpread: Math.max(1, Math.round(cfg.quizMinSpread - Math.floor((round - 1) * 0.7))),
+  };
+}
+
+function _localDangerFromMonsters(x, y, monsters) {
+  if (!monsters || !monsters.length) return 0;
+  let score = 0;
+  for (const m of monsters) {
+    const d = Math.abs(m.x - x) + Math.abs(m.y - y);
+    score += Math.max(0, 7 - d);
+  }
+  return score;
+}
+
+function _scoreAroundTarget(v, ideal, tol) {
+  const diff = Math.abs(v - ideal);
+  return _optClamp(100 - (diff / Math.max(0.001, tol)) * 100, 0, 100);
+}
+
+function evaluateMapFitness(config = {}) {
+  const cfg = normalizeOptimizerConfig(config);
+  const oldLoop = CFG.LOOP_ADD_RATIO;
+  const oldDead = CFG.DEAD_END_PASSES;
+
+  const bases = CFG.PLAYER_BASES.slice(0, cfg.numPlayers);
+  const breakdownSum = {
+    fairness: 0,
+    pathLength: 0,
+    chokeBalance: 0,
+    monsterSpread: 0,
+    quizDistribution: 0,
+    openness: 0,
+    danger: 0,
+  };
+  const roundAgg = {
+    1: { n: 0, difficulty: 0, treasureDist: 0 },
+    2: { n: 0, difficulty: 0, treasureDist: 0 },
+    3: { n: 0, difficulty: 0, treasureDist: 0 },
+  };
+
+  let samples = 0;
+  let totalFitness = 0;
+
+  try {
+    // Không ảnh hưởng gameplay dài hạn: chỉ mượn CFG khi đánh giá offline rồi restore.
+    CFG.LOOP_ADD_RATIO = cfg.LOOP_ADD_RATIO;
+    CFG.DEAD_END_PASSES = cfg.DEAD_END_PASSES;
+
+    for (let round = 1; round <= 3; round++) {
+      for (let s = 0; s < cfg.samplesPerRound; s++) {
+        const seed = cfg.seedBase + round * 1009 + s * 97;
+        const grid = generateMaze(CFG.W, CFG.H, seed, round);
+        const gc = applyGraphColoring(grid, CFG.W, CFG.H);
+        const rng = mkRng(seed ^ 0x9e3779b9);
+        const csp = cspSolve(
+          grid,
+          gc,
+          round,
+          cfg.numPlayers,
+          rng,
+          CFG.W,
+          CFG.H,
+          _buildOptimizerRoundOverrides(cfg, round)
+        );
+
+        const treasure = csp.treasure;
+        if (!treasure) continue;
+
+        const distMaps = bases.map(b => bfsDistanceMap(grid, b.x, b.y, CFG.W, CFG.H));
+        const tIdx = treasure.y * CFG.W + treasure.x;
+        const tDists = distMaps.map(dm => dm[tIdx]).filter(d => d >= 0);
+        if (!tDists.length) continue;
+
+        const fairStd = stdDev(tDists);
+        const sorted = tDists.slice().sort((a, b) => a - b);
+        const fairLead = (sorted[1] ?? sorted[0]) - sorted[0];
+        const avgTreasureDist = tDists.reduce((a, b) => a + b, 0) / tDists.length;
+
+        const chokeCount = rankChokePoints(grid, CFG.W, CFG.H).length;
+
+        const mons = csp.monsters || [];
+        let monMin = mons.length > 1 ? 999 : 0;
+        let monAvg = 0, monPairs = 0;
+        for (let i = 0; i < mons.length; i++) {
+          for (let j = i + 1; j < mons.length; j++) {
+            const d = Math.abs(mons[i].x - mons[j].x) + Math.abs(mons[i].y - mons[j].y);
+            monMin = Math.min(monMin, d);
+            monAvg += d;
+            monPairs++;
+          }
+        }
+        if (mons.length > 1 && monPairs > 0) monAvg /= monPairs;
+        if (mons.length <= 1) monMin = 6;
+
+        const quizzes = csp.quizCells || [];
+        let quizMin = quizzes.length > 1 ? 999 : 0;
+        for (let i = 0; i < quizzes.length; i++) {
+          for (let j = i + 1; j < quizzes.length; j++) {
+            const d = Math.abs(quizzes[i].x - quizzes[j].x) + Math.abs(quizzes[i].y - quizzes[j].y);
+            quizMin = Math.min(quizMin, d);
+          }
+        }
+        if (quizzes.length <= 1) quizMin = 4;
+
+        const nColors = Math.max(1, gc?.numColors || 1);
+        const qColor = new Array(nColors).fill(0);
+        for (const q of quizzes) {
+          const c = (gc && gc.colorMap[q.y * CFG.W + q.x] >= 0) ? gc.colorMap[q.y * CFG.W + q.x] : 0;
+          qColor[c % nColors]++;
+        }
+        const qColorStd = stdDev(qColor);
+
+        let floor = 0, degreeSum = 0;
+        for (let y = 1; y < CFG.H - 1; y++) {
+          for (let x = 1; x < CFG.W - 1; x++) {
+            if (grid[y * CFG.W + x] === CFG.T_WALL) continue;
+            floor++;
+            degreeSum += neighbors4(x, y, CFG.W, CFG.H).filter(n => grid[n.y * CFG.W + n.x] !== CFG.T_WALL).length;
+          }
+        }
+        const floorRatio = floor / ((CFG.W - 2) * (CFG.H - 2));
+        const avgDegree = floor ? degreeSum / floor : 0;
+
+        const localDangerTre = _localDangerFromMonsters(treasure.x, treasure.y, mons);
+
+        const fairnessScore = _optClamp(100 - fairStd * 18 - fairLead * 7.5, 0, 100);
+        const pathScore = _scoreAroundTarget(avgTreasureDist, 11 + round * 3, 8 + round * 2);
+        const chokeScore = _scoreAroundTarget(chokeCount, 9 + round * 4, 11);
+        const monSpreadScore = _optClamp((monMin * 13) + (monAvg * 3.4), 0, 100);
+        const quizScore = _optClamp(100 - qColorStd * 28 + Math.min(25, quizMin * 7), 0, 100);
+        const openScore = _optClamp(
+          _scoreAroundTarget(floorRatio, 0.47, 0.16) * 0.58 + _scoreAroundTarget(avgDegree, 2.25, 0.95) * 0.42,
+          0,
+          100
+        );
+        const dangerScore = _optClamp(100 - localDangerTre * cfg.dangerWeight * 4.8, 0, 100);
+
+        const fitness =
+          fairnessScore * 0.23 +
+          pathScore * 0.17 +
+          chokeScore * 0.12 +
+          monSpreadScore * 0.16 +
+          quizScore * 0.12 +
+          openScore * 0.12 +
+          dangerScore * 0.08;
+
+        totalFitness += fitness;
+        samples++;
+        breakdownSum.fairness += fairnessScore;
+        breakdownSum.pathLength += pathScore;
+        breakdownSum.chokeBalance += chokeScore;
+        breakdownSum.monsterSpread += monSpreadScore;
+        breakdownSum.quizDistribution += quizScore;
+        breakdownSum.openness += openScore;
+        breakdownSum.danger += dangerScore;
+
+        const diffIndex = avgTreasureDist + chokeCount * 0.3 + mons.length * 0.7 + localDangerTre * cfg.dangerWeight * 0.9;
+        roundAgg[round].n++;
+        roundAgg[round].difficulty += diffIndex;
+        roundAgg[round].treasureDist += avgTreasureDist;
+      }
+    }
+  } finally {
+    CFG.LOOP_ADD_RATIO = oldLoop;
+    CFG.DEAD_END_PASSES = oldDead;
+  }
+
+  if (!samples) {
+    return {
+      config: cfg,
+      fitness: 0,
+      breakdown: {
+        fairness: 0,
+        pathLength: 0,
+        chokeBalance: 0,
+        monsterSpread: 0,
+        quizDistribution: 0,
+        openness: 0,
+        danger: 0,
+        difficultyProgression: 0,
+      },
+      meta: { samples: 0, roundDifficulty: {} },
+    };
+  }
+
+  const rd = {};
+  for (const r of [1, 2, 3]) {
+    const n = Math.max(1, roundAgg[r].n);
+    rd[r] = {
+      difficulty: +(roundAgg[r].difficulty / n).toFixed(2),
+      treasureDist: +(roundAgg[r].treasureDist / n).toFixed(2),
+      n,
+    };
+  }
+  const incA = rd[2].difficulty >= rd[1].difficulty ? 1 : 0;
+  const incB = rd[3].difficulty >= rd[2].difficulty ? 1 : 0;
+  const progressionScore = ((incA + incB) / 2) * 100;
+
+  const breakdown = {
+    fairness: +(breakdownSum.fairness / samples).toFixed(2),
+    pathLength: +(breakdownSum.pathLength / samples).toFixed(2),
+    chokeBalance: +(breakdownSum.chokeBalance / samples).toFixed(2),
+    monsterSpread: +(breakdownSum.monsterSpread / samples).toFixed(2),
+    quizDistribution: +(breakdownSum.quizDistribution / samples).toFixed(2),
+    openness: +(breakdownSum.openness / samples).toFixed(2),
+    danger: +(breakdownSum.danger / samples).toFixed(2),
+    difficultyProgression: +progressionScore.toFixed(2),
+  };
+
+  const baseFitness = totalFitness / samples;
+  const finalFitness = +(baseFitness * 0.9 + progressionScore * 0.1).toFixed(3);
+
+  return {
+    config: cfg,
+    fitness: finalFitness,
+    breakdown,
+    meta: {
+      samples,
+      roundDifficulty: rd,
+      note: 'Offline heuristic fitness. Prototype for experimentation/reporting.',
+    },
+  };
+}
+
+function _optimizerSaveResult(method, best, history) {
+  GS.optimizerDebug = {
+    method,
+    timestamp: Date.now(),
+    bestConfig: best.config,
+    bestFitness: best.fitness,
+    bestBreakdown: best.breakdown,
+    meta: best.meta,
+    history,
+  };
+  return GS.optimizerDebug;
+}
+
+function _optimizerPrintBest(title, result) {
+  console.log(`[Optimizer] ${title}`);
+  console.log('[Optimizer] bestFitness =', result.fitness);
+  console.log('[Optimizer] bestConfig =', result.config);
+  console.table(result.breakdown);
+  console.log('[Optimizer] roundDifficulty =', result.meta?.roundDifficulty);
+}
+
+function runHillClimbingOptimizer(iterations = 40) {
+  const iters = Math.max(1, Math.round(iterations || 40));
+  let current = evaluateMapFitness(OPT_DEFAULT_CONFIG);
+  let best = current;
+  const history = [{ i: 0, fitness: current.fitness }];
+
+  for (let i = 1; i <= iters; i++) {
+    const stepScale = i < iters * 0.35 ? 1.25 : 0.85;
+    const candCfg = _mutateOptimizerConfig(current.config, stepScale);
+    const cand = evaluateMapFitness(candCfg);
+
+    if (cand.fitness >= current.fitness) current = cand;
+    if (cand.fitness > best.fitness) best = cand;
+
+    // random restart nhẹ để thoát local optimum.
+    if (i % 12 === 0 && Math.random() < 0.4) {
+      const restart = evaluateMapFitness(_randomOptimizerConfig(current.config));
+      if (restart.fitness > current.fitness) current = restart;
+      if (restart.fitness > best.fitness) best = restart;
+    }
+    history.push({ i, fitness: +best.fitness.toFixed(3) });
+  }
+
+  _optimizerSaveResult('hill-climbing', best, history);
+  _optimizerPrintBest('Hill Climbing done', best);
+  return { bestConfig: best.config, bestFitness: best.fitness, breakdown: best.breakdown, history };
+}
+
+function runSimulatedAnnealingOptimizer(iterations = 60) {
+  const iters = Math.max(1, Math.round(iterations || 60));
+  let current = evaluateMapFitness(OPT_DEFAULT_CONFIG);
+  let best = current;
+  const history = [{ i: 0, fitness: current.fitness }];
+
+  let temp = 1.0;
+  const cooling = Math.pow(0.04, 1 / Math.max(1, iters));
+  for (let i = 1; i <= iters; i++) {
+    const candCfg = _mutateOptimizerConfig(current.config, 0.6 + temp * 1.3);
+    const cand = evaluateMapFitness(candCfg);
+    const delta = cand.fitness - current.fitness;
+    const acceptProb = delta >= 0 ? 1 : Math.exp(delta / Math.max(0.001, temp * 18));
+    if (Math.random() < acceptProb) current = cand;
+    if (current.fitness > best.fitness) best = current;
+    temp *= cooling;
+    history.push({ i, fitness: +best.fitness.toFixed(3), temp: +temp.toFixed(4) });
+  }
+
+  _optimizerSaveResult('simulated-annealing', best, history);
+  _optimizerPrintBest('Simulated Annealing done', best);
+  return { bestConfig: best.config, bestFitness: best.fitness, breakdown: best.breakdown, history };
+}
+
+function runGeneticOptimizer(populationSize = 14, generations = 14) {
+  const popSize = Math.max(4, Math.round(populationSize || 14));
+  const gens = Math.max(1, Math.round(generations || 14));
+
+  let population = [];
+  population.push(normalizeOptimizerConfig(OPT_DEFAULT_CONFIG));
+  while (population.length < popSize) population.push(_randomOptimizerConfig(OPT_DEFAULT_CONFIG));
+
+  let globalBest = evaluateMapFitness(population[0]);
+  const history = [];
+
+  const tournamentPick = (evaluated) => {
+    const k = Math.min(4, evaluated.length);
+    const picks = [];
+    for (let i = 0; i < k; i++) picks.push(evaluated[ri(0, evaluated.length)]);
+    picks.sort((a, b) => b.result.fitness - a.result.fitness);
+    return picks[0].cfg;
+  };
+
+  for (let g = 0; g < gens; g++) {
+    const evaluated = population.map(cfg => ({ cfg, result: evaluateMapFitness(cfg) }));
+    evaluated.sort((a, b) => b.result.fitness - a.result.fitness);
+    const bestGen = evaluated[0].result;
+    if (bestGen.fitness > globalBest.fitness) globalBest = bestGen;
+
+    const avgFit = evaluated.reduce((s, e) => s + e.result.fitness, 0) / evaluated.length;
+    history.push({ gen: g, best: +bestGen.fitness.toFixed(3), avg: +avgFit.toFixed(3) });
+
+    const next = [evaluated[0].cfg, evaluated[1]?.cfg || evaluated[0].cfg];
+    while (next.length < popSize) {
+      const p1 = tournamentPick(evaluated);
+      const p2 = tournamentPick(evaluated);
+      let child = _crossoverOptimizerConfig(p1, p2);
+      const mutRate = 0.35 - Math.min(0.2, g / Math.max(1, gens) * 0.2);
+      if (Math.random() < mutRate) child = _mutateOptimizerConfig(child, 1.0);
+      next.push(child);
+    }
+    population = next;
+  }
+
+  _optimizerSaveResult('genetic', globalBest, history);
+  _optimizerPrintBest('Genetic Optimizer done', globalBest);
+  return {
+    bestConfig: globalBest.config,
+    bestFitness: globalBest.fitness,
+    breakdown: globalBest.breakdown,
+    history,
+  };
+}
+
+function optimizerReport() {
+  const r = GS.optimizerDebug;
+  if (!r) {
+    console.warn('[Optimizer] Chua co ket qua. Goi runHillClimbingOptimizer() hoac runSimulatedAnnealingOptimizer() hoac runGeneticOptimizer() truoc.');
+    return null;
+  }
+  console.log(`[OptimizerReport] method=${r.method} bestFitness=${r.bestFitness}`);
+  console.log('[OptimizerReport] bestConfig:', r.bestConfig);
+  console.table(r.bestBreakdown || {});
+  if (r.meta?.roundDifficulty) console.log('[OptimizerReport] roundDifficulty:', r.meta.roundDifficulty);
+  if (Array.isArray(r.history)) console.table(r.history.slice(-15));
+  return clone(r);
+}
+
+/* ================================================================
    CSP ENGINE – Constraint Satisfaction Problem placement
    Biến: TreasurePos, MonsterPos[0..M-1], QuizPos[0..N-1]
    Domain: tất cả floor cells, lọc trước theo ràng buộc đơn
@@ -1699,12 +2154,12 @@ function isReachable(grid, from, to, W, H) {
 
 // Trả về tập ràng buộc theo ván (round 1→3: ngày càng chặt hơn)
 // numPlayers: 2-4 → ảnh hưởng số quái tối đa
-function getCspConstraints(round, numPlayers) {
+function getCspConstraints(round, numPlayers, overrides = null) {
   const r = Math.max(1, Math.min(3, round));
   const monsterCount = 4 + (r - 1) * 2; // R1=4, R2=6, R3=8
   const fairnessStdMax = 3.2 + r * 0.7; // R1:3.9 R2:4.6 R3:5.3
   const fairnessLeadMax = 5 + r;         // R1:6   R2:7   R3:8
-  return {
+  const constraints = {
     // Treasure: phải cách base ít nhất N tile Manhattan
     treasureMinDistBase: 8 + r * 2,       // R1:10  R2:12  R3:14
     // Treasure: phải có đường BFS đến từ ít nhất 1 base
@@ -1737,6 +2192,13 @@ function getCspConstraints(round, numPlayers) {
     // Max bước thử mỗi biến trước khi fallback
     maxAttempts: 500,
   };
+  if (overrides && typeof overrides === 'object') {
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v == null || Number.isNaN(v)) continue;
+      if (k in constraints) constraints[k] = v;
+    }
+  }
+  return constraints;
 }
 
 // Bản đồ khoảng cách BFS từ 1 nguồn đến toàn map (ô tường = -1)
@@ -1920,9 +2382,9 @@ function selectVarByMrvDegree(vars, domains, degreeMap) {
 
 // ── CSP Solver chính ──
 // Trả về { success, treasure, quizCells, monsters, log, constraints }
-function cspSolve(grid, gcResult, round, numPlayers, rng, W, H) {
+function cspSolve(grid, gcResult, round, numPlayers, rng, W, H, constraintsOverride = null) {
   const t0 = performance.now();
-  const constraints = getCspConstraints(round, numPlayers);
+  const constraints = getCspConstraints(round, numPlayers, constraintsOverride);
   const bases = CFG.PLAYER_BASES.slice(0, numPlayers);
   const baseDistMaps = bases.map(b => bfsDistanceMap(grid, b.x, b.y, W, H));
   const log = [];
@@ -2351,6 +2813,7 @@ const GS = {
   cspConstraints: null, // ràng buộc CSP ván hiện tại
   cspStats: null,       // {timeMs, attempts[3], backtracks[3], fairness[], fairnessStd}
   monsterAssignDebug: null,
+  optimizerDebug: null,
   cpuDebug: {           // debug dữ liệu FSM + Utility AI của CPU
     state: '--',
     target: null,
