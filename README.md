@@ -1,180 +1,416 @@
-# MAZE DUEL  
-### Game mê cung 2 người chơi – Multiplayer Realtime với WebSocket
-
-**Môn học:** Trí tuệ nhân tạo / Kỹ thuật thỏa mãn ràng buộc  
-**Chương liên quan:** Chương 3 – Các phương pháp giải bài toán thỏa mãn ràng buộc  
-
----
+# Maze Duel - BO3 Match
 
 ## 1. Giới thiệu dự án
 
-**Maze Duel** là một game 2D góc nhìn top-down, lấy cảm hứng từ Pacman, trong đó **2 người chơi thi đấu trực tiếp** trong một mê cung.  
-Mục tiêu của trò chơi là **tìm và mang một kho báu duy nhất về vị trí xuất phát của mình** để giành chiến thắng.
+`Maze Duel` là một đồ án game mê cung 2D viết bằng một file HTML/CSS/JavaScript duy nhất. Trò chơi cho phép người dùng chơi theo hai chế độ:
 
-Điểm đặc biệt của dự án:
-- Game chạy **realtime multiplayer** thông qua **WebSocket**
-- Mê cung và chướng ngại vật **không tĩnh**, có thể thay đổi theo thời gian
-- Trò chơi **ứng dụng trực tiếp các thuật toán AI trong Chương 3**, bao gồm:
-  - Bài toán thỏa mãn ràng buộc (CSP)
-  - Thuật toán tô màu đồ thị
-  - Bài toán phân công công việc (Hungarian Algorithm)
+- `Offline`: chơi với CPU ở 3 mức độ khó.
+- `Online`: nhiều người chơi trong cùng một phòng qua MQTT.
 
-Dự án vừa mang tính **thực hành lập trình**, vừa là **minh chứng trực quan cho việc ứng dụng thuật toán AI vào hệ thống thực tế**.
+Mỗi trận đấu diễn ra theo thể thức `BO3` (Best of 3). Trong mỗi ván, người chơi phải tìm kho báu trong mê cung, nhặt kho báu và đưa nó về đúng vị trí xuất phát của mình để giành chiến thắng.
 
----
+Điểm nổi bật của dự án:
 
-## 2. Luật chơi & Gameplay
+- Mê cung được sinh ngẫu nhiên theo seed.
+- Độ khó tăng dần theo từng round.
+- Có quiz tile, trap, quái vật, cơ chế cướp kho báu.
+- Có ứng dụng các kỹ thuật AI như CSP, Graph Coloring và Pathfinding.
+- Có debug panel và báo cáo chất lượng bản đồ phục vụ mục tiêu học tập, phân tích thuật toán.
 
-### 2.1 Mục tiêu
-- Tìm **kho báu (Treasure)** trong mê cung
-- Nhặt kho báu và **đưa về đúng điểm xuất phát của mình**
-- Người đầu tiên mang kho báu về thành công sẽ **chiến thắng**
+README này mô tả chi tiết phiên bản hiện tại của dự án trong `claudegame.html`.
 
-### 2.2 Các giai đoạn (Phase)
-- **SEARCH**  
-  Hai người chơi cùng tìm kho báu
-- **RETURN**  
-  Khi một người nhặt kho báu:
-  - Người đó phải mang kho báu về điểm xuất phát
-  - Người còn lại được quyền **truy đuổi và cướp kho báu**
+## 2. Mục tiêu của đồ án
 
-### 2.3 Chướng ngại vật – Quiz
-- Các ô màu vàng là **Quiz Tile**
-- Khi bước vào, người chơi:
-  - Bị khóa di chuyển
-  - Phải trả lời một câu hỏi (toán học, logic, mẹo…)
-- Trả lời đúng → tiếp tục  
-- Trả lời sai → bị phạt (delay / mất lượt)
+Đồ án hướng tới các mục tiêu sau:
 
-### 2.4 Cướp kho báu
-- Nếu đối thủ **chạm vào người đang giữ kho báu**
-- Kho báu sẽ **đổi chủ**
+- Xây dựng một trò chơi mê cung có tính tương tác cao.
+- Kết hợp giữa lập trình giao diện, gameplay và thuật toán AI.
+- Minh họa trực quan cho các chủ đề như:
+  - Sinh mê cung.
+  - Tìm đường.
+  - Bài toán thỏa mãn ràng buộc.
+  - Tô màu đồ thị.
+- Tạo ra một sản phẩm có thể trình bày như một đồ án môn học hoặc bài tập lớn.
 
----
+## 3. Tổng quan gameplay
 
-## 3. Kiến trúc hệ thống
+Trong mỗi ván chơi:
 
-### 3.1 Mô hình Client – Server
+1. Người chơi xuất hiện tại base của mình.
+2. Kho báu được đặt ở một vị trí hợp lệ trong mê cung.
+3. Người chơi di chuyển để tìm kho báu.
+4. Khi nhặt được kho báu, mục tiêu chuyển thành mang kho báu về base.
+5. Người chơi khác hoặc CPU có thể cướp kho báu nếu chạm vào người đang giữ kho báu.
+6. Quái vật và trap tạo thêm áp lực trong quá trình di chuyển.
+7. Người đầu tiên đưa kho báu về base sẽ thắng ván.
 
-Server giữ vai trò **authoritative server**:
-- Xử lý toàn bộ logic game
-- Kiểm tra va chạm, luật chơi, chiến thắng
-- Client chỉ gửi input và hiển thị trạng thái
+Toàn bộ trận đấu kéo dài tối đa 3 ván. Ai thắng nhiều ván hơn sẽ thắng trận.
 
-┌───────────────┐ WebSocket ┌────────────────────────┐
-│ Web Client A │ <-------------------> │ FastAPI Game Server │
-│ (Canvas UI) │ │ GameRoom + Algorithms │
-└───────────────┘ └────────────────────────┘
-┌───────────────┐ WebSocket ┌────────────────────────┘
-│ Web Client B │ <-------------------> │ CSP / Coloring / │
-│ (Canvas UI) │ │ Hungarian Algorithms │
-└───────────────┘ └────────────────────────┘
+## 4. Tính năng chính
 
----
+### 4.1 Chế độ chơi
 
-## 4. Công nghệ sử dụng
+- Chơi offline với CPU.
+- Chơi online theo phòng.
+- Hỗ trợ tối đa nhiều người chơi trong một phòng theo cấu hình `MAX_PLAYERS`.
 
-- **Python 3.10+**
-- **FastAPI** (WebSocket server)
-- **Uvicorn** (ASGI server)
-- **HTML / CSS / JavaScript**
-- Canvas API cho render game 2D
+### 4.2 Hệ thống mê cung
 
----
+- Mê cung được sinh bằng thuật toán DFS carve trên lưới ô lẻ.
+- Có thêm bước mở loop để giảm ngõ cụt.
+- Có bước hậu xử lý đảm bảo bản đồ luôn có đường đi hợp lệ.
+- Độ khó mê cung tăng theo round:
+  - Round cao hơn thì bản đồ chặt hơn.
+  - Số vòng lặp ít hơn.
+  - Xác suất đắp lại tường cao hơn.
 
-## 5. Cấu trúc thư mục
+### 4.3 Hệ thống kho báu
 
-├─ app.py # FastAPI server + WebSocket endpoint
-├─ game.py # Game loop, room, state, luật chơi
-├─ maze.py # Sinh mê cung + biến đổi map
-├─ questions.py # Ngân hàng câu hỏi
-├─ web_client_v2.html # Giao diện web
-├─ requirements.txt
-└─ algorithms/
-├─ csp_placement.py # CSP – đặt treasure & quiz
-├─ coloring.py # Tô màu đồ thị quiz
-└─ hungarian.py # Bài toán phân công công việc
+- Kho báu được đặt bằng CSP ở vị trí hợp lệ.
+- Người chơi có thể nhặt kho báu khi đi vào đúng ô chứa kho báu.
+- Người cầm kho báu có thể bị cướp nếu đối thủ chạm vào.
+- Khi có người nhặt kho báu, bản đồ có thể được tái sinh để làm trận đấu khó hơn và biến động hơn.
 
----
+### 4.4 Hệ thống quiz
 
-## 6. Hướng dẫn cài đặt & chạy
+- Một số ô trên bản đồ là `quiz tile`.
+- Khi đi vào quiz tile, người chơi phải trả lời câu hỏi.
+- Nếu trả lời sai thì vẫn phải tiếp tục trả lời lại.
+- Chỉ khi trả lời đúng thì quiz tile mới bị xóa.
+- CPU không hiện modal quiz mà sẽ dừng trong một khoảng thời gian để mô phỏng suy nghĩ.
 
-### 6.1 Tạo môi trường ảo
+### 4.5 Hệ thống trap
+
+- Người chơi có thể đặt bẫy bằng phím `Space`.
+- Mỗi người có giới hạn số lượng bẫy đang tồn tại cùng lúc.
+- Bẫy có thời gian tồn tại hữu hạn.
+- Người đặt bẫy không bị trúng bẫy của chính mình.
+- Nếu người đang mang kho báu dẫm trúng bẫy, kho báu sẽ rơi tại chỗ.
+
+### 4.6 Hệ thống quái vật
+
+- Quái vật xuất hiện từ đầu ván với số lượng tăng theo round.
+- Quái vật tuần tra và truy đuổi người chơi khi phát hiện trong bán kính cho phép.
+- Quái vật không đi xuyên tường.
+- Nếu chạm vào quái vật, người chơi sẽ bị đưa về base.
+- Vị trí spawn ban đầu của quái được kiểm soát để tránh gây vòng lặp chết-liên-tục gần base.
+
+### 4.7 Debug và đánh giá
+
+- Có `debug panel` trong game.
+- Có thể xem thống kê về CSP, Graph Coloring, số quái, số trap, round hiện tại.
+- Có thể gọi `mapQualityReport()` từ console để in báo cáo chất lượng bản đồ.
+
+## 5. Công nghệ sử dụng
+
+Dự án hiện tại sử dụng:
+
+- `HTML5`
+- `CSS3`
+- `JavaScript` thuần (vanilla JavaScript)
+- `HTML5 Canvas` để render game 2D
+- `MQTT.js` để hỗ trợ chế độ online
+- MQTT broker mặc định:
+  - `wss://broker.emqx.io:8084/mqtt`
+
+## 6. Kiến trúc hệ thống hiện tại
+
+Phiên bản hiện tại không có backend riêng trong repository. Toàn bộ logic chính đang nằm trong `claudegame.html`.
+
+### 6.1 Chế độ offline
+
+- Chạy hoàn toàn cục bộ trong trình duyệt.
+- Game loop, AI, render, logic va chạm đều xử lý trên client.
+
+### 6.2 Chế độ online
+
+- Dùng MQTT để gửi/nhận thông điệp giữa các client.
+- Host đóng vai trò `authoritative client`:
+  - Nhận input từ client khác.
+  - Xử lý logic game.
+  - Đồng bộ trạng thái cho các client.
+
+Điều này có nghĩa là online hiện tại phù hợp cho demo, học tập, trình diễn đồ án, nhưng chưa phải mô hình server chuyên dụng dành cho production.
+
+## 7. Cấu trúc thư mục
+
+```text
+Game_Gemini/
+|- claudegame.html   # Toàn bộ giao diện, logic game, AI, network
+|- README.md         # Tài liệu mô tả đồ án
+```
+
+Vì toàn bộ dự án được gói trong một file HTML lớn, việc triển khai rất đơn giản nhưng cũng khiến mã nguồn tập trung nhiều logic trong một nơi.
+
+## 8. Hướng dẫn chạy dự án
+
+Bạn có thể mở trực tiếp file HTML hoặc chạy qua local server.
+
+### 8.1 Cách 1: Mở trực tiếp file
+
+Mở file `claudegame.html` bằng trình duyệt.
+
+### 8.2 Cách 2: Chạy local server bằng Python
+
+Khuyến nghị dùng local server để ổn định hơn khi làm việc với asset hoặc môi trường trình duyệt.
+
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-Nếu bị chặn:
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+cd E:\Learn\Ky4_25_26\TTNT\Game_Gemini
+python -m http.server 5500
+```
 
-### 6.2 Cài thư viện
-python -m pip install -r requirements.txt
+Sau đó truy cập:
 
-### 6.3 Chạy server
-python -m uvicorn app:app --host 127.0.0.1 --port 8080 --reload
+```text
+http://127.0.0.1:5500/claudegame.html
+```
 
-### 6.4 Mở game
-Mở trình duyệt:
-http://127.0.0.1:8080/
-Mở 2 tab để chơi 2 người.
+## 9. Hướng dẫn sử dụng
 
-## 7. Giao thức WebSocket
-Client → Server
-{ "type": "join", "name": "Player1" }
-{ "type": "input", "dir": "U" }
-{ "type": "answer", "qid": "...", "choice": 2 }
+### 9.1 Chơi offline
 
-## 8. Ứng dụng các thuật toán AI
-# 8.1 Thuật toán 1 – Bài toán thỏa mãn ràng buộc (CSP)
+1. Nhập tên người chơi.
+2. Nhấn `Bắt đầu` trong phần chơi với máy.
+3. Chọn độ khó CPU:
+   - `Dễ`
+   - `Thường`
+   - `Khó`
+4. Xác nhận để vào game.
 
-Bài toán
-Cần đặt:
-1 kho báu (Treasure)
-N ô Quiz
-Thỏa các ràng buộc:
-Kho báu reachable từ cả 2 người chơi
-Kho báu cân bằng khoảng cách giữa 2 người chơi
-Quiz không trùng nhau, không trùng start
-Quiz cách nhau tối thiểu một khoảng nhất định
-Giải pháp
-Dùng BFS để tính khoảng cách
-Backtracking + pruning để tìm nghiệm thỏa mãn
-📁 File: algorithms/csp_placement.py
+### 9.2 Chơi online
 
-# 8.2 Thuật toán 2 – Tô màu đồ thị (Graph Coloring)
-Mục tiêu
-Các ô Quiz gần nhau không nên cùng loại câu hỏi
-Mô hình
-Node = 1 Quiz
-Edge nếu 2 Quiz ở gần nhau
-Dùng Greedy Coloring để gán màu → ánh xạ thành category câu hỏi.
-📁 File: algorithms/coloring.py
+1. Đợi trạng thái MQTT kết nối thành công.
+2. Một người tạo phòng để lấy mã phòng.
+3. Người chơi khác nhập mã phòng để tham gia.
+4. Host nhấn `Bắt đầu trận` khi đủ người.
 
-# 8.3 Thuật toán 3 – Bài toán phân công (Hungarian Algorithm)
-Mục tiêu
-Gán câu hỏi cho Quiz sao cho:
-Quiz gần kho báu → câu hỏi khó
-Quiz xa kho báu → câu hỏi dễ
-Mô hình
-Worker = Quiz tile
-Job = Question
-Cost = |difficulty - targetDifficulty|
-Dùng Hungarian Algorithm để tối ưu tổng chi phí.
-📁 File: algorithms/hungarian.py
+## 10. Điều khiển trong game
 
-# 9. Kết luận
-Dự án Maze Duel đã:
-Ứng dụng thành công 3 nhóm thuật toán AI
-Kết hợp AI với game multiplayer realtime
-Thể hiện rõ tính thực tiễn của các thuật toán trong Chương 3
-Game có thể mở rộng thêm AI đối thủ, replay, spectator, hoặc học máy trong tương lai.
+### 10.1 Bàn phím
 
-# 10. License
+- Di chuyển:
+  - `W A S D`
+  - hoặc `Arrow Keys`
+- Đặt bẫy:
+  - `Space`
+- Bật/tắt debug panel:
+  - `Tab`
+- Bật/tắt graph coloring overlay:
+  - `G`
 
----
+### 10.2 Cảm ứng
 
-Nếu bạn muốn, mình có thể:
-- ✍️ Viết **báo cáo Word/PDF** dựa trên README này  
-- 🎯 Tóm tắt lại thành **slide thuyết trình**  
-- 🧠 Thêm phần **đánh giá độ phức tạp & ưu/nhược điểm** cho từng thuật toán  
+Trên thiết bị cảm ứng, giao diện hiện các nút điều hướng ở góc màn hình để hỗ trợ di chuyển.
 
-Bạn chỉ cần nói 👍
+## 11. Luật chơi chi tiết
+
+### 11.1 Base
+
+- Mỗi người chơi có một base riêng.
+- Đưa kho báu về đúng base của mình để thắng ván.
+
+### 11.2 Kho báu
+
+- Kho báu chỉ có một trên bản đồ.
+- Nếu người chơi chưa có kho báu và đi vào đúng vị trí, người đó sẽ nhặt được kho báu.
+- Nếu đối thủ chạm vào người đang giữ kho báu, kho báu có thể đổi chủ.
+
+### 11.3 Quiz tile
+
+- Quiz tile là các ô đặc biệt trên bản đồ.
+- Khi đi vào ô này, người chơi phải trả lời câu hỏi.
+- Trả lời sai thì không được bỏ qua mà phải tiếp tục trả lời lại.
+- Trả lời đúng mới được xem là vượt qua ô đó.
+
+### 11.4 Trap
+
+- Người chơi có thể đặt bẫy ở vị trí hiện tại.
+- Không thể đặt bẫy ngay trên base.
+- Bẫy sẽ biến mất sau một khoảng thời gian.
+- Nếu người chơi đang giữ kho báu dẫm phải bẫy, kho báu sẽ rơi xuống vị trí đó.
+
+### 11.5 Quái vật
+
+- Quái vật di chuyển theo chu kỳ thời gian cấu hình.
+- Có thể tuần tra hoặc truy đuổi người chơi.
+- Khi chạm người chơi, quái vật sẽ đưa người chơi về base.
+- Quái vật được bố trí để hạn chế camp ngay sát base từ đầu ván.
+
+### 11.6 Điều kiện thắng
+
+- Thắng ván: mang kho báu về base.
+- Thắng trận: thắng đa số ván trong BO3.
+
+## 12. Các thuật toán và kỹ thuật AI được áp dụng
+
+## 12.1 Sinh mê cung
+
+Phần sinh mê cung có các bước chính:
+
+- DFS carve trên các ô có tọa độ lẻ.
+- Mở thêm loop để giảm số lượng ngõ cụt.
+- Giảm dead-end có kiểm soát.
+- Hậu xử lý để nối các vùng rời rạc thành một thành phần liên thông.
+- Điều chỉnh độ khó theo round bằng cách thay đổi mật độ tường và số lượng loop.
+
+## 12.2 Constraint Satisfaction Problem (CSP)
+
+Hệ CSP dùng để đặt:
+
+- Vị trí kho báu.
+- Vị trí quái vật.
+- Vị trí quiz tile.
+
+Các ràng buộc chính:
+
+- Không trùng vị trí.
+- Khoảng cách tối thiểu đến base.
+- Khoảng cách tối thiểu đến kho báu hoặc giữa các quái với nhau.
+- Kho báu phải reachable.
+- Quái vật phải có khoảng cách an toàn theo đường đi thật tới base, tránh tạo vòng lặp chết liên tục.
+
+## 12.3 Graph Coloring
+
+- Áp dụng tô màu đồ thị trên các ô hợp lệ trong mê cung.
+- Dùng để phân tán quiz theo vùng.
+- Đồng thời hỗ trợ phân tích danger/opportunity trong debug hoặc AI.
+
+## 12.4 Pathfinding
+
+Các thuật toán tìm đường đang được sử dụng gồm:
+
+- `BFS`
+- `A*`
+- `A* an toàn` có weighting theo nguy hiểm
+- `Dijkstra safe` cho CPU hard
+
+CPU sẽ chọn chiến lược khác nhau tùy theo độ khó.
+
+## 13. Hệ thống AI của CPU
+
+CPU có 3 mức độ:
+
+### 13.1 Dễ
+
+- Di chuyển tương đối đơn giản.
+- Có yếu tố ngẫu nhiên cao.
+- Phản ứng chậm hơn.
+
+### 13.2 Thường
+
+- Cân bằng giữa đuổi mục tiêu và né nguy hiểm.
+- Dùng pathfinding hợp lý hơn.
+
+### 13.3 Khó
+
+- Dùng chiến lược tìm đường an toàn tốt hơn.
+- Tận dụng influence map và danger map.
+- Thời gian phản ứng nhanh hơn.
+
+## 14. Giao thức mạng MQTT
+
+Các message type chính đang được sử dụng:
+
+- `JOIN`
+- `ROOM_UPDATE`
+- `REJECT`
+- `INIT`
+- `MOVE`
+- `UPDATE`
+- `MONS`
+- `ROUND_END`
+- `NEXT_ROUND`
+- `MATCH_END`
+- `RETURN_LOBBY`
+- `LEAVE`
+- `TRAP`
+- `REGEN_MAP`
+
+Topic chính cho phòng:
+
+```text
+mazeduel/room/<ROOM_CODE>
+```
+
+## 15. Các cấu hình quan trọng trong mã nguồn
+
+Trong object `CFG` của `claudegame.html`, có thể điều chỉnh nhanh các thông số như:
+
+- `W`, `H`, `TILE`: kích thước mê cung và tile.
+- `MAX_PLAYERS`: số người chơi tối đa.
+- `MONSTER_MOVE_MS`: chu kỳ di chuyển của quái.
+- `TRAP_LIMIT`: số bẫy tối đa mỗi người.
+- `TRAP_TTL`: thời gian tồn tại của bẫy.
+- `BO3`: số ván tối đa trong trận.
+- `MQTT_URL`: địa chỉ broker MQTT.
+- `CPU_EASY_MS`, `CPU_NORMAL_MS`, `CPU_HARD_MS`: tốc độ suy nghĩ của CPU.
+- `LOOP_ADD_RATIO`, `DEAD_END_PASSES`: cấu hình độ phức tạp mê cung.
+
+## 16. Debug và đánh giá chất lượng bản đồ
+
+### 16.1 Debug panel trong game
+
+Nhấn `Tab` để mở debug panel. Tại đây có thể xem:
+
+- FPS
+- Ping MQTT
+- Mode hiện tại
+- Số lượng người chơi
+- Số trap
+- Round hiện tại
+- Thông tin Graph Coloring
+- Thông tin CSP
+
+### 16.2 Báo cáo map quality
+
+Mở trình duyệt, nhấn `F12`, vào `Console`, sau đó gọi:
+
+```js
+mapQualityReport()
+```
+
+Hàm này sẽ in ra:
+
+- Thống kê chất lượng mê cung.
+- Thông tin placement của treasure, quiz, quái vật.
+- Số liệu CSP.
+- Thông tin fairness giữa các base.
+
+## 17. Ưu điểm của đồ án
+
+- Chạy gọn trong một file, dễ demo và nộp bài.
+- Có đầy đủ gameplay cơ bản và nhiều cơ chế mở rộng.
+- Có ứng dụng nhiều thuật toán AI rõ ràng.
+- Dễ trực quan hóa để thuyết trình.
+- Có cả chế độ offline lẫn online.
+
+## 18. Hạn chế hiện tại
+
+- Logic hiện tập trung trong một file HTML lớn, khó bảo trì khi tiếp tục mở rộng.
+- Chế độ online phụ thuộc vào broker MQTT công cộng.
+- Host-authority mới là mức client-side, chưa phải dedicated server thực thụ.
+- Việc phân tách module, test tự động, và logging chuyên sâu chưa được tách riêng thành cấu trúc project hoàn chỉnh.
+
+## 19. Hướng phát triển trong tương lai
+
+- Tách game logic thành nhiều module JavaScript riêng.
+- Xây dựng backend authoritative server thật sự.
+- Bổ sung replay, thống kê sau trận và lịch sử trận đấu.
+- Mở rộng thêm vật phẩm, kỹ năng, nhiều loại quái vật.
+- Thêm chế độ xếp hạng hoặc nhiều bản đồ khác nhau.
+- Tối ưu AI theo hành vi người chơi.
+
+## 20. Kết luận
+
+`Maze Duel` là một đồ án game mê cung có tính tương tác cao, phù hợp để trình bày trong các môn học liên quan đến lập trình game, trí tuệ nhân tạo, hoặc hệ thống tương tác thời gian thực. Dự án thể hiện rõ sự kết hợp giữa:
+
+- Thiết kế gameplay.
+- Lập trình giao diện canvas.
+- Đồng bộ trạng thái online.
+- Ứng dụng các thuật toán AI trong thực tế.
+
+Đây là một nền tảng tốt để tiếp tục mở rộng thành một sản phẩm hoàn chỉnh hơn trong tương lai.
+
+## 21. Ghi chú bản quyền
+
+Dự án hiện phù hợp cho mục đích học tập, báo cáo, bài tập lớn và trình diễn đồ án. Nếu muốn công bố rộng rãi, nên bổ sung thêm file license riêng như `MIT` hoặc `Apache-2.0`.
