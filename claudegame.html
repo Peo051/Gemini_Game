@@ -357,6 +357,11 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   <div id="dbg-csp-log" style="max-height:100px;overflow-y:auto;font-size:.65rem;color:#adf;">Log: --</div>
   <div id="dbg-csp-stats" style="color:#fa8;font-size:.65rem;">Stats: --</div>
   <div id="dbg-csp-fairness" style="color:#8ff;font-size:.65rem;">Fairness: --</div>
+  <div style="margin-top:6px;border-top:1px solid #6af4;padding-top:6px;color:#9cf;">🤖 CPU AI</div>
+  <div id="dbg-cpu-state" style="font-size:.68rem;">State: --</div>
+  <div id="dbg-cpu-target" style="font-size:.68rem;">Target: --</div>
+  <div id="dbg-cpu-reason" style="font-size:.65rem;color:#cef;">Reason: --</div>
+  <div id="dbg-cpu-utils" style="max-height:90px;overflow-y:auto;font-size:.63rem;color:#bdf;">Utility: --</div>
   <div style="margin-top:6px;color:#ff0;">[G] Bật/tắt overlay | [F12→console] mapQualityReport()</div>
 </div>
 
@@ -1702,6 +1707,12 @@ const GS = {
   cspLog: [],           // log CSP solver để debug
   cspConstraints: null, // ràng buộc CSP ván hiện tại
   cspStats: null,       // {timeMs, attempts[3], backtracks[3], fairness[], fairnessStd}
+  cpuDebug: {           // debug dữ liệu FSM + Utility AI của CPU
+    state: '--',
+    target: null,
+    reason: '--',
+    utility: {},
+  },
   quizActive: false,    // đang hiện modal quiz → khóa di chuyển
 };
 
@@ -2369,89 +2380,315 @@ function aStarMonsterAware(grid, monsters, sx, sy, tx, ty, W, H) {
 /* ================================================================
    CPU AI – bot
    ================================================================ */
-function cpuTick() {
-  if(!GS.running) return;
-  const cpu=GS.players.find(p=>p.isBot);
-  if(!cpu||Date.now()<cpu.cpuThinkingUntil) return;
-  
-  let target=null;
-  
-  if(GS.cpuDiff==='easy'){
-    // Dễ: di chuyển ngẫu nhiên, thỉnh thoảng hướng tới kho báu
-    // Nhưng vẫn tránh ô đang có quái trực tiếp
-    if(Math.random()<0.3){
-      target = GS.treasureHolder===-1 ? GS.treasure : (cpu.has ? CFG.PLAYER_BASES[cpu.idx] : GS.treasure);
+const CPU_STATES = {
+  SEEK_TREASURE: 'SEEK_TREASURE',
+  RETURN_BASE: 'RETURN_BASE',
+  CHASE_HOLDER: 'CHASE_HOLDER',
+  AMBUSH: 'AMBUSH',
+  EVADE_DANGER: 'EVADE_DANGER',
+  SET_TRAP: 'SET_TRAP',
+  RECOVER: 'RECOVER',
+};
+
+function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+function clamp100(v){ return Math.max(0, Math.min(100, v)); }
+function pathLenSafe(sx, sy, tx, ty) {
+  if (tx == null || ty == null) return 9999;
+  const p = bfs(GS.grid, sx, sy, tx, ty, CFG.W, CFG.H);
+  return p ? p.length : 9999;
+}
+function nearestMonsterDist(x, y) {
+  let d = 9999;
+  for (const m of GS.monsters) d = Math.min(d, Math.abs(m.x - x) + Math.abs(m.y - y));
+  return d;
+}
+function nearestTrapDist(cpu, x, y) {
+  let d = 9999;
+  for (const t of GS.traps) {
+    if (t.owner === cpu.idx) continue;
+    d = Math.min(d, Math.abs(t.x - x) + Math.abs(t.y - y));
+  }
+  return d;
+}
+function chooseSafestNearbyCell(cpu, radius = 4) {
+  let best = null, bestScore = -1e9;
+  for (let y = Math.max(1, cpu.y - radius); y <= Math.min(CFG.H - 2, cpu.y + radius); y++) {
+    for (let x = Math.max(1, cpu.x - radius); x <= Math.min(CFG.W - 2, cpu.x + radius); x++) {
+      if (GS.grid[y * CFG.W + x] === CFG.T_WALL) continue;
+      const dCpu = Math.abs(x - cpu.x) + Math.abs(y - cpu.y);
+      if (dCpu === 0) continue;
+      const score =
+        (getCellOpportunity(x, y) * 1.4)
+        - (getCellDanger(x, y) * 2.2)
+        - (nearestMonsterDist(x, y) <= 1 ? 20 : 0)
+        - (nearestTrapDist(cpu, x, y) <= 1 ? 14 : 0)
+        - dCpu * 0.5;
+      if (score > bestScore) { bestScore = score; best = { x, y }; }
     }
-    if(!target){
-      const monSet = new Set(GS.monsters.map(m => m.y*CFG.W+m.x));
-      const dirs=shuffle([[1,0],[-1,0],[0,1],[0,-1]]);
-      // Ưu tiên hướng không có quái; nếu bị chặn hoàn toàn mới đi qua quái
-      const safeDirs = dirs.filter(([dx,dy])=>{
-        const nx=cpu.x+dx, ny=cpu.y+dy;
-        return nx>=0&&nx<CFG.W&&ny>=0&&ny<CFG.H
-          &&GS.grid[ny*CFG.W+nx]!==CFG.T_WALL
-          &&!monSet.has(ny*CFG.W+nx);
-      });
-      const fallbackDirs = dirs.filter(([dx,dy])=>{
-        const nx=cpu.x+dx, ny=cpu.y+dy;
-        return nx>=0&&nx<CFG.W&&ny>=0&&ny<CFG.H&&GS.grid[ny*CFG.W+nx]!==CFG.T_WALL;
-      });
-      const pick = (safeDirs.length ? safeDirs : fallbackDirs)[0];
-      if(pick){ doMovePlayer(cpu.idx,pick[0],pick[1]); }
-      return;
+  }
+  return best;
+}
+
+function updateCpuBlackboard(cpu) {
+  if (!cpu.ai) cpu.ai = { state: CPU_STATES.SEEK_TREASURE, stateSince: Date.now(), recoverUntil: 0, lastX: cpu.x, lastY: cpu.y, blackboard: {} };
+  updateChokeCache();
+  buildInfluenceMap();
+
+  const bb = cpu.ai.blackboard;
+  const now = Date.now();
+  const base = CFG.PLAYER_BASES[cpu.idx];
+  const holder = GS.treasureHolder >= 0 ? GS.players[GS.treasureHolder] : null;
+  const enemyHolder = holder && holder.idx !== cpu.idx ? holder : null;
+
+  // Đánh dấu RECOVER khi vừa bị quái đẩy về base (dịch chuyển lớn trong 1 tick).
+  const jumpedBackToBase = (cpu.x === base.x && cpu.y === base.y) && (Math.abs(cpu.ai.lastX - cpu.x) + Math.abs(cpu.ai.lastY - cpu.y) >= 3);
+  if (jumpedBackToBase) cpu.ai.recoverUntil = now + 1800;
+  cpu.ai.lastX = cpu.x; cpu.ai.lastY = cpu.y;
+
+  bb.now = now;
+  bb.base = base;
+  bb.treasure = GS.treasure;
+  bb.hasTreasure = !!cpu.has;
+  bb.enemyHolder = enemyHolder;
+  bb.holder = holder;
+  bb.dangerAtCpu = +getCellDanger(cpu.x, cpu.y).toFixed(2);
+  bb.nearMonster = nearestMonsterDist(cpu.x, cpu.y);
+  bb.nearTrap = nearestTrapDist(cpu, cpu.x, cpu.y);
+  bb.baseDist = pathLenSafe(cpu.x, cpu.y, base.x, base.y);
+  bb.treasureDist = GS.treasure ? pathLenSafe(cpu.x, cpu.y, GS.treasure.x, GS.treasure.y) : 9999;
+  bb.holderDist = enemyHolder ? pathLenSafe(cpu.x, cpu.y, enemyHolder.x, enemyHolder.y) : 9999;
+  bb.recovering = now < cpu.ai.recoverUntil;
+
+  bb.holderPathToBase = null;
+  bb.bestAmbush = null;
+  if (enemyHolder) {
+    const hb = CFG.PLAYER_BASES[enemyHolder.idx];
+    const hPath = bfs(GS.grid, enemyHolder.x, enemyHolder.y, hb.x, hb.y, CFG.W, CFG.H);
+    bb.holderPathToBase = hPath;
+    let best = null, bestCost = 1e9;
+    if (hPath && hPath.length) {
+      let px = enemyHolder.x, py = enemyHolder.y;
+      for (let i = 0; i < hPath.length; i++) {
+        px += hPath[i].dx; py += hPath[i].dy;
+        const cp = CHOKE_CACHE.points.find(c => c.x === px && c.y === py);
+        if (!cp) continue;
+        const cDist = pathLenSafe(cpu.x, cpu.y, px, py);
+        const cost = cDist - cp.rank * 0.1 + i * 0.2;
+        if (cost < bestCost) { bestCost = cost; best = { x: px, y: py, rank: cp.rank }; }
+      }
     }
-  } else {
-    // Thường/Khó: tới mục tiêu chiến lược
-    if(cpu.has){
-      target=CFG.PLAYER_BASES[cpu.idx]; // mang về base
-    } else if(GS.treasureHolder>=0&&GS.treasureHolder!==cpu.idx){
-      // Cướp kho báu từ holder
-      const holder=GS.players[GS.treasureHolder];
-      if(holder) target={x:holder.x,y:holder.y};
+    bb.bestAmbush = best || CHOKE_CACHE.points[0] || null;
+  }
+
+  bb.bestTrapPoint = bb.bestAmbush || CHOKE_CACHE.points[0] || null;
+  return bb;
+}
+
+function computeUtilityScores(cpu) {
+  const bb = cpu.ai.blackboard || updateCpuBlackboard(cpu);
+  const hasTreasure = bb.hasTreasure;
+  const freeTreasure = !hasTreasure && GS.treasureHolder === -1 && !!bb.treasure;
+  const enemyHasTreasure = !!bb.enemyHolder;
+  const dangerN = clamp01(bb.dangerAtCpu / 12);
+  const monThreat = clamp01((6 - bb.nearMonster) / 6);
+  const trapThreat = clamp01((5 - bb.nearTrap) / 5);
+  const distTreasureN = clamp01(1 - Math.min(bb.treasureDist, 40) / 40);
+  const distBaseN = clamp01(1 - Math.min(bb.baseDist, 40) / 40);
+  const distHolderN = clamp01(1 - Math.min(bb.holderDist, 40) / 40);
+  const hasTrapBudget = cpu.trapCount < CFG.TRAP_LIMIT ? 1 : 0;
+  const chokeFactor = bb.bestAmbush ? clamp01((bb.bestAmbush.rank || 0) / 200) : 0;
+
+  const utility = {
+    seekTreasure: clamp100((freeTreasure ? 55 : 5) + distTreasureN * 30 - dangerN * 18 - monThreat * 8),
+    returnBase: clamp100((hasTreasure ? 68 : 0) + distBaseN * 24 + (hasTreasure ? 10 : 0) - dangerN * 6),
+    chaseHolder: clamp100((enemyHasTreasure ? 60 : 0) + distHolderN * 28 - dangerN * 10),
+    ambush: clamp100((enemyHasTreasure ? 42 : 0) + chokeFactor * 34 + distHolderN * 8 - dangerN * 9),
+    evadeDanger: clamp100((dangerN * 55) + (monThreat * 35) + (trapThreat * 25) + (bb.recovering ? 25 : 0) - (hasTreasure ? 10 : 0)),
+    setTrap: clamp100((hasTrapBudget ? 32 : 0) + (enemyHasTreasure ? 20 : 0) + chokeFactor * 30 - dangerN * 8),
+    recover: clamp100((bb.recovering ? 85 : 5) + dangerN * 10 + monThreat * 8),
+  };
+
+  // Điều chỉnh theo độ khó: easy đơn giản hơn, normal rút gọn, hard đầy đủ.
+  if (GS.cpuDiff === 'easy') {
+    utility.ambush *= 0.2;
+    utility.setTrap *= 0.35;
+    utility.evadeDanger *= 0.7;
+  } else if (GS.cpuDiff === 'normal') {
+    utility.ambush *= 0.55;
+    utility.setTrap *= 0.75;
+  }
+  for (const k of Object.keys(utility)) utility[k] = +clamp100(utility[k]).toFixed(2);
+  return utility;
+}
+
+function decideCpuState(cpu) {
+  const ai = cpu.ai;
+  const bb = ai.blackboard;
+  const utility = computeUtilityScores(cpu);
+
+  const actionToState = {
+    seekTreasure: CPU_STATES.SEEK_TREASURE,
+    returnBase: CPU_STATES.RETURN_BASE,
+    chaseHolder: CPU_STATES.CHASE_HOLDER,
+    ambush: CPU_STATES.AMBUSH,
+    evadeDanger: CPU_STATES.EVADE_DANGER,
+    setTrap: CPU_STATES.SET_TRAP,
+    recover: CPU_STATES.RECOVER,
+  };
+  const stateToAction = {
+    [CPU_STATES.SEEK_TREASURE]: 'seekTreasure',
+    [CPU_STATES.RETURN_BASE]: 'returnBase',
+    [CPU_STATES.CHASE_HOLDER]: 'chaseHolder',
+    [CPU_STATES.AMBUSH]: 'ambush',
+    [CPU_STATES.EVADE_DANGER]: 'evadeDanger',
+    [CPU_STATES.SET_TRAP]: 'setTrap',
+    [CPU_STATES.RECOVER]: 'recover',
+  };
+
+  let forced = null;
+  let reason = '';
+  if (cpu.has) {
+    forced = CPU_STATES.RETURN_BASE;
+    reason = 'ENTRY: đang cầm kho báu -> RETURN_BASE';
+  } else if (utility.recover >= 80) {
+    forced = CPU_STATES.RECOVER;
+    reason = 'ENTRY: vừa thoát tình huống xấu -> RECOVER';
+  } else if (utility.evadeDanger >= 78) {
+    forced = CPU_STATES.EVADE_DANGER;
+    reason = 'ENTRY: danger cao -> EVADE_DANGER';
+  }
+
+  let bestAction = 'seekTreasure';
+  let bestScore = -1;
+  const allowedHard = ['seekTreasure','returnBase','chaseHolder','ambush','evadeDanger','setTrap','recover'];
+  const allowedNormal = ['seekTreasure','returnBase','chaseHolder','evadeDanger','setTrap','recover'];
+  const allowedEasy = ['seekTreasure','returnBase','chaseHolder','evadeDanger'];
+  const allowed = GS.cpuDiff === 'hard' ? allowedHard : GS.cpuDiff === 'normal' ? allowedNormal : allowedEasy;
+
+  for (const a of allowed) {
+    if (utility[a] > bestScore) { bestScore = utility[a]; bestAction = a; }
+  }
+
+  let nextState = forced || actionToState[bestAction];
+  if (GS.cpuDiff === 'normal' && nextState === CPU_STATES.AMBUSH) nextState = CPU_STATES.CHASE_HOLDER;
+  if (GS.cpuDiff === 'easy' && nextState === CPU_STATES.SET_TRAP) nextState = CPU_STATES.SEEK_TREASURE;
+
+  const prevState = ai.state || CPU_STATES.SEEK_TREASURE;
+  const prevAction = stateToAction[prevState] || 'seekTreasure';
+  const prevScore = utility[prevAction] ?? 0;
+  const stateAge = Date.now() - (ai.stateSince || 0);
+
+  // EXIT rule: chỉ đổi state khi lợi ích rõ ràng, tránh rung lắc liên tục.
+  if (!forced && prevState !== nextState) {
+    const gain = bestScore - prevScore;
+    if (gain < 8 && stateAge < 2200) {
+      nextState = prevState;
+      reason = `EXIT: giữ state cũ (${prevState}) vì gain=${gain.toFixed(1)} < 8`;
     } else {
-      target=GS.treasure; // tìm kho báu
+      reason = `EXIT: đổi ${prevState} -> ${nextState} (gain=${gain.toFixed(1)})`;
+    }
+  }
+  if (!reason) reason = `UTILITY: chọn ${nextState} với score=${bestScore.toFixed(1)}`;
+
+  if (nextState !== prevState) ai.stateSince = Date.now();
+  ai.state = nextState;
+  ai.lastDecisionReason = reason;
+  ai.lastUtility = utility;
+  GS.cpuDebug.state = nextState;
+  GS.cpuDebug.reason = reason;
+  GS.cpuDebug.utility = utility;
+  return nextState;
+}
+
+function selectCpuTarget(cpu, state) {
+  const bb = cpu.ai.blackboard;
+  const base = bb.base;
+  let target = null;
+  switch (state) {
+    case CPU_STATES.RETURN_BASE:
+      target = { x: base.x, y: base.y };
+      break;
+    case CPU_STATES.SEEK_TREASURE:
+      target = GS.treasureHolder === -1 ? bb.treasure : (bb.enemyHolder ? { x: bb.enemyHolder.x, y: bb.enemyHolder.y } : bb.treasure);
+      break;
+    case CPU_STATES.CHASE_HOLDER:
+      target = bb.enemyHolder ? { x: bb.enemyHolder.x, y: bb.enemyHolder.y } : bb.treasure;
+      break;
+    case CPU_STATES.AMBUSH:
+      target = bb.bestAmbush ? { x: bb.bestAmbush.x, y: bb.bestAmbush.y } : (bb.enemyHolder ? { x: bb.enemyHolder.x, y: bb.enemyHolder.y } : bb.treasure);
+      break;
+    case CPU_STATES.EVADE_DANGER:
+    case CPU_STATES.RECOVER:
+      target = chooseSafestNearbyCell(cpu, state === CPU_STATES.RECOVER ? 5 : 4) || { x: base.x, y: base.y };
+      break;
+    case CPU_STATES.SET_TRAP:
+      target = bb.bestTrapPoint ? { x: bb.bestTrapPoint.x, y: bb.bestTrapPoint.y } : chooseSafestNearbyCell(cpu, 3);
+      break;
+  }
+  GS.cpuDebug.target = target;
+  return target;
+}
+
+function executeCpuAction(cpu, state, target) {
+  if (!target) return;
+
+  if (state === CPU_STATES.SET_TRAP) {
+    const onBase = CFG.PLAYER_BASES.some(b => b.x === cpu.x && b.y === cpu.y);
+    const nearTarget = Math.abs(cpu.x - target.x) + Math.abs(cpu.y - target.y) <= 1;
+    if (!onBase && nearTarget && cpu.trapCount < CFG.TRAP_LIMIT) {
+      placeTrap(cpu.idx);
+      GS.cpuDebug.reason += ' | action: đặt bẫy';
     }
   }
 
-  if(!target) return;
-
-  let path;
-  if(GS.cpuDiff==='hard' && GS.gcResult){
-    // Khó: ưu tiên dijkstraSafe (cell-level danger từ INF_MAP) nếu đã build;
-    // nếu chưa có INF_MAP thì dùng aStarMonsterAware tránh quái trực tiếp
-    buildInfluenceMap(); // đảm bảo INF_MAP mới
-    if(INF_MAP.danger){
-      path = dijkstraSafe(GS.grid, cpu.x, cpu.y, target.x, target.y, CFG.W, CFG.H, 'safe');
-    } else {
-      const danger = computeZoneDanger(GS.gcResult, GS.monsters, GS.players, cpu.idx, CFG.W);
-      path = aStarSafe(GS.grid, GS.gcResult, danger, cpu.x,cpu.y, target.x,target.y, CFG.W,CFG.H, 2);
+  let path = null;
+  if (GS.cpuDiff === 'hard' && GS.gcResult) {
+    const costMode = (state === CPU_STATES.EVADE_DANGER || state === CPU_STATES.RECOVER) ? 'safe' : 'seek';
+    path = dijkstraSafe(GS.grid, cpu.x, cpu.y, target.x, target.y, CFG.W, CFG.H, costMode);
+    if (!path || !path.length) {
+      const zDanger = computeZoneDanger(GS.gcResult, GS.monsters, GS.players, cpu.idx, CFG.W);
+      path = aStarSafe(GS.grid, GS.gcResult, zDanger, cpu.x, cpu.y, target.x, target.y, CFG.W, CFG.H, costMode === 'safe' ? 2 : 1);
     }
   } else {
-    // Normal/Easy (khi có target): A* tránh ô có quái
     path = aStarMonsterAware(GS.grid, GS.monsters, cpu.x, cpu.y, target.x, target.y, CFG.W, CFG.H);
   }
 
-  // Kiểm tra bước đầu có đi thẳng vào quái không → nếu có, thử làm mới path
-  if(path && path.length){
-    const nx=cpu.x+path[0].dx, ny=cpu.y+path[0].dy;
-    const stepOnMonster = GS.monsters.some(m=>m.x===nx&&m.y===ny);
-    if(stepOnMonster){
-      // Tìm bước bên cạnh không có quái
-      const dxs=[1,-1,0,0], dys=[0,0,1,-1];
-      let escaped=false;
-      for(let d=0;d<4;d++){
-        const ax=cpu.x+dxs[d], ay=cpu.y+dys[d];
-        if(ax<0||ax>=CFG.W||ay<0||ay>=CFG.H) continue;
-        if(GS.grid[ay*CFG.W+ax]===CFG.T_WALL) continue;
-        if(GS.monsters.some(m=>m.x===ax&&m.y===ay)) continue;
-        doMovePlayer(cpu.idx,dxs[d],dys[d]);
-        escaped=true; break;
-      }
-      if(!escaped) doMovePlayer(cpu.idx,path[0].dx,path[0].dy); // kẹt hoàn toàn, đành đi
-      return;
-    }
-    doMovePlayer(cpu.idx,path[0].dx,path[0].dy);
+  // Easy giữ đơn giản: có xác suất đi random-safe thay vì bám path cứng.
+  if (GS.cpuDiff === 'easy' && Math.random() < 0.38) {
+    const dirs = shuffle([[1,0],[-1,0],[0,1],[0,-1]]);
+    const pick = dirs.find(([dx,dy]) => {
+      const nx = cpu.x + dx, ny = cpu.y + dy;
+      return nx>=0&&nx<CFG.W&&ny>=0&&ny<CFG.H&&GS.grid[ny*CFG.W+nx]!==CFG.T_WALL;
+    });
+    if (pick) { doMovePlayer(cpu.idx, pick[0], pick[1]); return; }
   }
+
+  if (path && path.length) {
+    const nx = cpu.x + path[0].dx, ny = cpu.y + path[0].dy;
+    const stepOnMonster = GS.monsters.some(m => m.x === nx && m.y === ny);
+    if (stepOnMonster && state !== CPU_STATES.RETURN_BASE) {
+      const safe = chooseSafestNearbyCell(cpu, 2);
+      if (safe) {
+        const sPath = bfs(GS.grid, cpu.x, cpu.y, safe.x, safe.y, CFG.W, CFG.H);
+        if (sPath && sPath.length) {
+          doMovePlayer(cpu.idx, sPath[0].dx, sPath[0].dy);
+          return;
+        }
+      }
+    }
+    doMovePlayer(cpu.idx, path[0].dx, path[0].dy);
+  }
+}
+
+function cpuTick() {
+  if(!GS.running) return;
+  const cpu = GS.players.find(p=>p.isBot);
+  if(!cpu || Date.now() < cpu.cpuThinkingUntil) return;
+
+  updateCpuBlackboard(cpu);
+  const state = decideCpuState(cpu);
+  const target = selectCpuTarget(cpu, state);
+  executeCpuAction(cpu, state, target);
 }
 
 // Di chuyển bất kỳ người chơi (nội bộ, không gửi mạng)
@@ -2976,6 +3213,25 @@ function updateDebugPanel(){
     });
     document.getElementById('dbg-csp-status').textContent='Chưa có CSP run';
     document.getElementById('dbg-csp-log').textContent='--';
+  }
+
+  // Thống kê CPU FSM + Utility
+  const cd = GS.cpuDebug || {};
+  const cpu = GS.players.find(p=>p.isBot);
+  const stateEl = document.getElementById('dbg-cpu-state');
+  const targetEl = document.getElementById('dbg-cpu-target');
+  const reasonEl = document.getElementById('dbg-cpu-reason');
+  const utilEl = document.getElementById('dbg-cpu-utils');
+  if(stateEl) stateEl.textContent = `State: ${cd.state || '--'} | Diff: ${GS.cpuDiff}`;
+  if(targetEl) {
+    const t = cd.target;
+    targetEl.textContent = t ? `Target: (${t.x},${t.y}) | CPU: (${cpu?.x??'-'},${cpu?.y??'-'})` : 'Target: --';
+  }
+  if(reasonEl) reasonEl.textContent = `Reason: ${cd.reason || '--'}`;
+  if(utilEl) {
+    const u = cd.utility || {};
+    const keys = ['seekTreasure','returnBase','chaseHolder','ambush','evadeDanger','setTrap','recover'];
+    utilEl.innerHTML = keys.map(k => `<div>${k}: ${u[k] ?? '--'}</div>`).join('');
   }
 }
 function toggleGraphColoring(){
