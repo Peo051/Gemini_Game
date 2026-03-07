@@ -1316,6 +1316,8 @@ function getCspConstraints(round, numPlayers) {
     treasureReachable: true,
     // Monster: phải cách base ít nhất N tile
     monsterMinDistBase: 5 + r,            // R1:6   R2:7   R3:8
+    // Monster: phải cách base theo đường đi thật (BFS) để tránh camp base
+    monsterMinPathBase: 8 + r,            // R1:9   R2:10  R3:11
     // Monster: phải cách quái khác ít nhất N tile
     monsterMinDistEach: 6 - Math.floor(r/2),  // R1:6  R2:5  R3:5
     // Monster: phải cách treasure ít nhất N tile
@@ -1331,6 +1333,30 @@ function getCspConstraints(round, numPlayers) {
     // Max bước thử mỗi biến trước khi fallback
     maxAttempts: 500,
   };
+}
+
+// Bản đồ khoảng cách BFS từ 1 nguồn đến toàn map (ô tường = -1)
+function bfsDistanceMap(grid, sx, sy, W, H) {
+  const dist = new Int16Array(W * H).fill(-1);
+  const start = sy * W + sx;
+  if (grid[start] === CFG.T_WALL) return dist;
+  const q = [start];
+  dist[start] = 0;
+  const dx = [1, -1, 0, 0], dy = [0, 0, 1, -1];
+  for (let qi = 0; qi < q.length; qi++) {
+    const cur = q[qi];
+    const cx = cur % W, cy = Math.floor(cur / W);
+    for (let d = 0; d < 4; d++) {
+      const nx = cx + dx[d], ny = cy + dy[d];
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      const ni = ny * W + nx;
+      if (dist[ni] >= 0) continue;
+      if (grid[ni] === CFG.T_WALL) continue;
+      dist[ni] = dist[cur] + 1;
+      q.push(ni);
+    }
+  }
+  return dist;
 }
 
 // ── Kiểm tra ràng buộc TreasurePos ──
@@ -1357,15 +1383,23 @@ function cspCheckTreasure(pos, bases, constraints, grid, W, H) {
 }
 
 // ── Kiểm tra ràng buộc MonsterPos[idx] ──
-function cspCheckMonster(pos, idx, assigned, constraints, bases) {
+function cspCheckMonster(pos, idx, assigned, constraints, bases, baseDistMaps, W, H) {
   // AllDifferent: không trùng với vị trí đã assign
   if (assigned.usedSet.has(`${pos.x},${pos.y}`))
     return { ok:false, reason:`✗ mon${idx}_pos_taken` };
   // Phải cách base đủ xa
-  for (const b of bases) {
+  for (let bi = 0; bi < bases.length; bi++) {
+    const b = bases[bi];
     const d = manhattan(pos, b);
     if (d < constraints.monsterMinDistBase)
       return { ok:false, reason:`✗ mon${idx}_too_close_base d=${d}` };
+
+    // Dùng khoảng cách BFS để tránh quái spawn quá gần lối về base.
+    if (baseDistMaps && baseDistMaps[bi]) {
+      const pd = baseDistMaps[bi][pos.y * W + pos.x];
+      if (pd >= 0 && pd < constraints.monsterMinPathBase)
+        return { ok:false, reason:`✗ mon${idx}_too_close_base_path d=${pd}` };
+    }
   }
   // Phải cách treasure đủ xa
   if (assigned.treasure) {
@@ -1439,6 +1473,7 @@ function cspSolve(grid, gcResult, round, numPlayers, rng, W, H) {
   const t0 = performance.now();
   const constraints = getCspConstraints(round, numPlayers);
   const bases = CFG.PLAYER_BASES.slice(0, numPlayers);
+  const baseDistMaps = bases.map(b => bfsDistanceMap(grid, b.x, b.y, W, H));
   const log = [];
   // attempts[phase]: tổng số ô được kiểm tra mỗi phase (P0=treasure, P1=monster, P2=quiz)
   const attempts = [0, 0, 0];
@@ -1512,7 +1547,7 @@ function cspSolve(grid, gcResult, round, numPlayers, rng, W, H) {
     totalAttempts = 0;
     for (const pos of monBaseDomain) {
       attempts[1]++; if (++totalAttempts > constraints.maxAttempts) break;
-      const chk = cspCheckMonster(pos, mi, assigned, constraints, bases);
+      const chk = cspCheckMonster(pos, mi, assigned, constraints, bases, baseDistMaps, W, H);
       if (chk.ok) {
         assigned.monsters[mi] = pos;
         assigned.usedSet.add(`${pos.x},${pos.y}`);
@@ -1522,17 +1557,16 @@ function cspSolve(grid, gcResult, round, numPlayers, rng, W, H) {
       } else { bcks[1]++; }
     }
     if (!placed) {
-      // Fallback: chỉ cần không trùng và xa base tối thiểu 4
+      // Fallback an toàn: vẫn giữ ràng buộc base-distance/path để tránh loop về base.
       const fb = allFloor.find(p =>
-        !assigned.usedSet.has(`${p.x},${p.y}`) &&
-        bases.every(b => manhattan(p,b) >= 4)
+        cspCheckMonster(p, mi, assigned, constraints, bases, baseDistMaps, W, H).ok
       );
       if (fb) {
         assigned.monsters[mi] = fb;
         assigned.usedSet.add(`${fb.x},${fb.y}`);
         log.push(`⚠ Monster[${mi}] FALLBACK→(${fb.x},${fb.y})`);
       } else {
-        log.push(`✗ Monster[${mi}] UNPLACED (no valid cell)`);
+        log.push(`✗ Monster[${mi}] UNPLACED (base-safe domain exhausted)`);
       }
     }
   }
