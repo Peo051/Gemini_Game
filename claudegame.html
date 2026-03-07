@@ -357,6 +357,11 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   <div id="dbg-csp-log" style="max-height:100px;overflow-y:auto;font-size:.65rem;color:#adf;">Log: --</div>
   <div id="dbg-csp-stats" style="color:#fa8;font-size:.65rem;">Stats: --</div>
   <div id="dbg-csp-fairness" style="color:#8ff;font-size:.65rem;">Fairness: --</div>
+  <div style="margin-top:6px;border-top:1px solid #5c8;padding-top:6px;color:#afc;">🌡 INFLUENCE MAP</div>
+  <div id="dbg-inf-maxd" style="font-size:.65rem;">Max danger: --</div>
+  <div id="dbg-inf-maxo" style="font-size:.65rem;">Max opportunity: --</div>
+  <div id="dbg-inf-cpu" style="font-size:.65rem;">CPU danger cell: --</div>
+  <div id="dbg-inf-target" style="font-size:.65rem;">Target opportunity: --</div>
   <div style="margin-top:6px;border-top:1px solid #6af4;padding-top:6px;color:#9cf;">🤖 CPU AI</div>
   <div id="dbg-cpu-state" style="font-size:.68rem;">State: --</div>
   <div id="dbg-cpu-target" style="font-size:.68rem;">Target: --</div>
@@ -366,7 +371,7 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   <div id="dbg-cpu-reason" style="font-size:.65rem;color:#cef;">Reason: --</div>
   <div id="dbg-cpu-minimax" style="font-size:.65rem;color:#9fe;">Minimax: --</div>
   <div id="dbg-cpu-utils" style="max-height:90px;overflow-y:auto;font-size:.63rem;color:#bdf;">Utility: --</div>
-  <div style="margin-top:6px;color:#ff0;">[G] Bật/tắt overlay | [F12→console] mapQualityReport()</div>
+  <div style="margin-top:6px;color:#ff0;">[G] Graph overlay | [I] Influence overlay | [F12→console] mapQualityReport()</div>
 </div>
 
 <script>
@@ -1020,16 +1025,24 @@ function dijkstraSafe(grid, sx, sy, tx, ty, W, H, costMode = 'safe', actorIdx = 
 
       // Chi phí cơ bản = 1
       let cellCost = 1;
-      // Tăng chi phí theo danger map (nếu đã build)
+      // Tăng/giảm chi phí theo influence map (danger/opportunity)
       if (INF_MAP.danger) {
         const d2 = steppingOnOwnTrap ? 0 : INF_MAP.danger[ni];
         cellCost += costMode === 'safe' ? d2 * 3 : d2 * 0.5;
+        if (INF_MAP.opportunity && costMode === 'seek') {
+          const o2 = INF_MAP.opportunity[ni] || 0;
+          cellCost -= Math.min(0.8, o2 * 0.12);
+        }
       }
       // Quiz cell: tốn thêm 3 (sẽ mất thời gian trả lời quiz)
       if (grid[ni] === CFG.T_QUIZ) cellCost += 3;
       // Choke point kiểm soát bởi đối thủ: tránh hơn khi 'safe'
       if (costMode === 'safe' && isCellChokePoint(nx, ny))
         cellCost += 4;
+      if (costMode === 'safe' && actorIdx >= 0) {
+        const actor = GS.players[actorIdx];
+        if (actor && shouldAvoidCell(actor, nx, ny)) cellCost += 3.2;
+      }
       const ng = dist[cur] + cellCost;
       if (ng < dist[ni]) {
         dist[ni] = ng; prev[ni] = cur;
@@ -1054,6 +1067,10 @@ const INF_MAP = {
   opportunity:  null,  // Float32Array(W*H)
   lastSeed:     -1,    // seed khi build lần cuối
   debugOverlay: false, // [I] bật/tắt overlay debug
+  maxDanger: 0,
+  maxDangerCell: null,
+  maxOpportunity: 0,
+  maxOpportunityCell: null,
 };
 
 /**
@@ -1113,8 +1130,19 @@ function buildInfluenceMap() {
   for (const cp of CHOKE_CACHE.points.slice(0, 10))
     spread(danger, cp.x, cp.y, 2, 1);
 
+  let maxDanger = -1, maxDangerIdx = -1;
+  let maxOpportunity = -1, maxOpportunityIdx = -1;
+  for (let i = 0; i < W * H; i++) {
+    if (danger[i] > maxDanger) { maxDanger = danger[i]; maxDangerIdx = i; }
+    if (opportunity[i] > maxOpportunity) { maxOpportunity = opportunity[i]; maxOpportunityIdx = i; }
+  }
+
   INF_MAP.danger      = danger;
   INF_MAP.opportunity = opportunity;
+  INF_MAP.maxDanger = +Math.max(0, maxDanger).toFixed(2);
+  INF_MAP.maxOpportunity = +Math.max(0, maxOpportunity).toFixed(2);
+  INF_MAP.maxDangerCell = maxDangerIdx >= 0 ? { x: maxDangerIdx % W, y: Math.floor(maxDangerIdx / W) } : null;
+  INF_MAP.maxOpportunityCell = maxOpportunityIdx >= 0 ? { x: maxOpportunityIdx % W, y: Math.floor(maxOpportunityIdx / W) } : null;
   INF_MAP.lastSeed    = GS.seed;
 }
 
@@ -1130,6 +1158,44 @@ function getCellOpportunity(x, y) {
   if (!INF_MAP.opportunity) return 0;
   const i = y * CFG.W + x;
   return (i >= 0 && i < INF_MAP.opportunity.length) ? INF_MAP.opportunity[i] : 0;
+}
+
+function scoreCellByInfluence(cpu, x, y) {
+  if (!cpu) return -1e9;
+  if (x < 0 || x >= CFG.W || y < 0 || y >= CFG.H) return -1e9;
+  if (GS.grid[y * CFG.W + x] === CFG.T_WALL) return -1e9;
+  const danger = getCellDanger(x, y);
+  const opp = getCellOpportunity(x, y);
+  const dCpu = Math.abs(x - cpu.x) + Math.abs(y - cpu.y);
+  let score = opp * 2.1 - danger * 2.6 - dCpu * 0.45;
+  if (isCellChokePoint(x, y) && danger > opp) score -= 8;
+  if (nearestMonsterDist(x, y) <= 1) score -= 18;
+  if (nearestTrapDist(cpu, x, y) <= 1) score -= 10;
+  return +score.toFixed(2);
+}
+
+function shouldAvoidCell(cpu, x, y) {
+  if (!cpu) return true;
+  const danger = getCellDanger(x, y);
+  const opp = getCellOpportunity(x, y);
+  const nearMon = nearestMonsterDist(x, y) <= 1;
+  const nearEnemyTrap = nearestTrapDist(cpu, x, y) <= 1;
+  const chokeRisk = isCellChokePoint(x, y) && danger > opp + 2;
+  return nearMon || nearEnemyTrap || danger > 13 || (danger > 9 && opp < 3) || chokeRisk;
+}
+
+function findBestOpportunityZone(cpu) {
+  if (!cpu) return null;
+  const radius = GS.cpuDiff === 'hard' ? 7 : 5;
+  let best = null;
+  for (let y = Math.max(1, cpu.y - radius); y <= Math.min(CFG.H - 2, cpu.y + radius); y++) {
+    for (let x = Math.max(1, cpu.x - radius); x <= Math.min(CFG.W - 2, cpu.x + radius); x++) {
+      if (GS.grid[y * CFG.W + x] === CFG.T_WALL) continue;
+      const score = scoreCellByInfluence(cpu, x, y);
+      if (!best || score > best.score) best = { x, y, score, danger: +getCellDanger(x, y).toFixed(2), opp: +getCellOpportunity(x, y).toFixed(2) };
+    }
+  }
+  return best;
 }
 
 /* ================================================================
@@ -1327,6 +1393,7 @@ function scoreChokeForAmbush(cpu, choke) {
   let score = Math.min(65, choke.rank * 0.25);
   score += Math.max(0, 18 - dCpu * 1.8);
   score -= getCellDanger(choke.x, choke.y) * 1.7;
+  score += Math.max(0, getCellOpportunity(choke.x, choke.y)) * 1.15;
 
   if (enemyHolder) {
     const eb = CFG.PLAYER_BASES[enemyHolder.idx];
@@ -1356,6 +1423,7 @@ function scoreChokeForDefense(cpu, choke) {
 
   score += Math.max(0, 16 - dCpu * 1.4);
   score -= getCellDanger(choke.x, choke.y) * 2;
+  score += Math.max(0, getCellOpportunity(choke.x, choke.y)) * 0.6;
   if (nearestMonsterDist(choke.x, choke.y) <= 1) score -= 16;
   if (CFG.PLAYER_BASES.some(b => Math.abs(b.x - choke.x) + Math.abs(b.y - choke.y) <= 1)) score -= 28;
   return +score.toFixed(2);
@@ -1886,6 +1954,7 @@ function initRound(seed, playersData, keepScore=false) {
   // ── GRAPH COLORING: tính trước, cung cấp domain info cho CSP ──
   GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
   GS.graphColorMap = GS.gcResult.colorMap;
+  buildInfluenceMap();
 
   // ── CSP PLACEMENT: treasure + monsters + quiz cells ──
   const cspRng = mkRng(GS.seed ^ 0x1F2E3D);
@@ -2028,6 +2097,7 @@ function regenerateMap() {
   // Graph coloring trên map mới
   GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
   GS.graphColorMap = GS.gcResult.colorMap;
+  buildInfluenceMap();
 
   // CSP: đặt quiz + quái (bỏ qua treasure vì đang được cầm)
   const cspRng = mkRng(GS.seed ^ 0xDEAD);
@@ -2159,6 +2229,7 @@ function resolveMove(pidx) {
   }
 
   if(GS.mode==='online'&&GS.isHost) broadcastState();
+  buildInfluenceMap();
 }
 
 // Kiểm tra bẫy tại vị trí người chơi
@@ -2180,6 +2251,7 @@ function checkStepOnTrap(pidx) {
       GS.traps.splice(i,1);
       const owner=GS.players[t.owner];
       if(owner) owner.trapCount=Math.max(0,owner.trapCount-1);
+      buildInfluenceMap();
       return;
     }
   }
@@ -2195,6 +2267,7 @@ function placeTrap(pidx) {
   if(atBase) return;
   GS.traps.push(makeTrap(pidx,p.x,p.y));
   p.trapCount++;
+  buildInfluenceMap();
   showHudMsg('Đã đặt bẫy! 🪤');
   if(GS.mode==='online'&&GS.isHost) broadcastState();
 }
@@ -2202,14 +2275,17 @@ function placeTrap(pidx) {
 // Kiểm tra bẫy hết hạn
 function checkTraps() {
   const now=Date.now();
+  let changed = false;
   for(let i=GS.traps.length-1;i>=0;i--){
     const t=GS.traps[i];
     if(now-t.createdAt>t.ttl){
       const owner=GS.players[t.owner];
       if(owner) owner.trapCount=Math.max(0,owner.trapCount-1);
       GS.traps.splice(i,1);
+      changed = true;
     }
   }
+  if (changed) buildInfluenceMap();
 }
 
 // Kết thúc ván
@@ -2419,6 +2495,7 @@ function moveMonsters() {
   if(GS.mode==='online'&&GS.isHost){
     mqttPublish({type:'MONS', mons:GS.monsters.map(m=>({x:m.x,y:m.y}))});
   }
+  buildInfluenceMap();
 }
 
 /**
@@ -2661,9 +2738,17 @@ function evaluateTrapCell(cpu, x, y) {
   else if (nearestTrap <= 2) { score -= 14; reasons.push('trapNear-14'); }
 
   const danger = getCellDanger(x, y);
+  const infScore = scoreCellByInfluence(cpu, x, y);
   if (danger > 0.1) {
     const p = Math.min(30, danger * 2.2);
     score -= p; reasons.push(`danger-${p.toFixed(0)}`);
+  }
+  if (infScore > 0) {
+    const b = Math.min(20, infScore * 0.45);
+    score += b; reasons.push(`influence+${b.toFixed(0)}`);
+  }
+  if (shouldAvoidCell(cpu, x, y)) {
+    score -= 18; reasons.push('avoidCell-18');
   }
   if (nearestMonsterDist(x, y) <= 1) { score -= 26; reasons.push('monsterAdj-26'); }
 
@@ -2796,6 +2881,12 @@ function updateCpuBlackboard(cpu) {
   bb.bestAmbush = getBestChokeForCpu(cpu, scoreChokeForAmbush, 20) || getNearestChokePoint(cpu.x, cpu.y);
   bb.bestDefenseChoke = getBestChokeForCpu(cpu, scoreChokeForDefense, 20) || bb.bestAmbush;
   bb.bestTrapPoint = bb.bestDefenseChoke || bb.bestAmbush || CHOKE_CACHE.points[0] || null;
+  bb.bestOpportunity = findBestOpportunityZone(cpu);
+  bb.influenceAtCpu = {
+    danger: +getCellDanger(cpu.x, cpu.y).toFixed(2),
+    opp: +getCellOpportunity(cpu.x, cpu.y).toFixed(2),
+    score: scoreCellByInfluence(cpu, cpu.x, cpu.y),
+  };
   return bb;
 }
 
@@ -2812,13 +2903,15 @@ function computeUtilityScores(cpu) {
   const distHolderN = clamp01(1 - Math.min(bb.holderDist, 40) / 40);
   const hasTrapBudget = cpu.trapCount < CFG.TRAP_LIMIT ? 1 : 0;
   const chokeFactor = bb.bestAmbush ? clamp01((bb.bestAmbush.rank || 0) / 200) : 0;
+  const zoneScoreN = clamp01(((bb.bestOpportunity?.score ?? 0) + 20) / 80);
+  const cpuInfluenceN = clamp01(((bb.influenceAtCpu?.score ?? 0) + 20) / 80);
 
   const utility = {
-    seekTreasure: clamp100((freeTreasure ? 55 : 5) + distTreasureN * 30 - dangerN * 18 - monThreat * 8),
+    seekTreasure: clamp100((freeTreasure ? 55 : 5) + distTreasureN * 30 + zoneScoreN * 10 - dangerN * 18 - monThreat * 8),
     returnBase: clamp100((hasTreasure ? 68 : 0) + distBaseN * 24 + (hasTreasure ? 10 : 0) - dangerN * 6),
     chaseHolder: clamp100((enemyHasTreasure ? 60 : 0) + distHolderN * 28 - dangerN * 10),
-    ambush: clamp100((enemyHasTreasure ? 42 : 0) + chokeFactor * 34 + distHolderN * 8 - dangerN * 9),
-    evadeDanger: clamp100((dangerN * 55) + (monThreat * 35) + (trapThreat * 25) + (bb.recovering ? 25 : 0) - (hasTreasure ? 10 : 0)),
+    ambush: clamp100((enemyHasTreasure ? 42 : 0) + chokeFactor * 34 + zoneScoreN * 8 + distHolderN * 8 - dangerN * 9),
+    evadeDanger: clamp100((dangerN * 55) + (monThreat * 35) + (trapThreat * 25) + (bb.recovering ? 25 : 0) - (hasTreasure ? 10 : 0) + (1 - cpuInfluenceN) * 9),
     setTrap: clamp100((hasTrapBudget ? 32 : 0) + (enemyHasTreasure ? 20 : 0) + chokeFactor * 30 - dangerN * 8),
     recover: clamp100((bb.recovering ? 85 : 5) + dangerN * 10 + monThreat * 8),
   };
@@ -2924,7 +3017,9 @@ function selectCpuTarget(cpu, state) {
       target = { x: base.x, y: base.y };
       break;
     case CPU_STATES.SEEK_TREASURE:
-      target = GS.treasureHolder === -1 ? bb.treasure : (bb.enemyHolder ? { x: bb.enemyHolder.x, y: bb.enemyHolder.y } : bb.treasure);
+      target = GS.treasureHolder === -1
+        ? (bb.bestOpportunity ? { x: bb.bestOpportunity.x, y: bb.bestOpportunity.y } : bb.treasure)
+        : (bb.enemyHolder ? { x: bb.enemyHolder.x, y: bb.enemyHolder.y } : (bb.bestOpportunity ? { x: bb.bestOpportunity.x, y: bb.bestOpportunity.y } : bb.treasure));
       break;
     case CPU_STATES.CHASE_HOLDER:
       target = bb.enemyHolder ? { x: bb.enemyHolder.x, y: bb.enemyHolder.y } : bb.treasure;
@@ -3158,6 +3253,8 @@ function evaluateDuelState(state, cpuIdx, enemyIdx) {
   // Danger map, monsters, traps
   score -= getCellDanger(cpu.x, cpu.y) * 1.8;
   score += getCellDanger(enemy.x, enemy.y) * 0.8;
+  score += scoreCellByInfluence(GS.players[cpuIdx], cpu.x, cpu.y) * 0.45;
+  score -= scoreCellByInfluence(GS.players[cpuIdx], enemy.x, enemy.y) * 0.22;
 
   const nearMonCpu = state.monsters.reduce((d,m)=>Math.min(d,Math.abs(m.x-cpu.x)+Math.abs(m.y-cpu.y)),999);
   const nearMonEnemy = state.monsters.reduce((d,m)=>Math.min(d,Math.abs(m.x-enemy.x)+Math.abs(m.y-enemy.y)),999);
@@ -3353,7 +3450,8 @@ function executeCpuAction(cpu, state, target) {
   if (path && path.length) {
     const nx = cpu.x + path[0].dx, ny = cpu.y + path[0].dy;
     const stepOnMonster = GS.monsters.some(m => m.x === nx && m.y === ny);
-    if (stepOnMonster && state !== CPU_STATES.RETURN_BASE) {
+    const avoidByInfluence = shouldAvoidCell(cpu, nx, ny) && state !== CPU_STATES.RETURN_BASE;
+    if ((stepOnMonster || avoidByInfluence) && state !== CPU_STATES.RETURN_BASE) {
       const safe = chooseSafestNearbyCell(cpu, 2);
       if (safe) {
         const sPath = bfs(GS.grid, cpu.x, cpu.y, safe.x, safe.y, CFG.W, CFG.H);
@@ -3587,6 +3685,31 @@ function drawFrame() {
       }
     }
   }
+
+  // Influence overlay riêng: đỏ = danger, xanh-vàng = opportunity.
+  if (INF_MAP.debugOverlay && INF_MAP.danger && INF_MAP.opportunity) {
+    ctx.save();
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        if (GS.grid[i] === CFG.T_WALL) continue;
+        const d = INF_MAP.danger[i] || 0;
+        const o = INF_MAP.opportunity[i] || 0;
+        const dA = Math.min(0.32, d / 36);
+        const oA = Math.min(0.28, o / 34);
+        if (dA > 0.02) {
+          ctx.fillStyle = `rgba(255,70,70,${dA})`;
+          ctx.fillRect(x * T, y * T, T, T);
+        }
+        if (oA > 0.02) {
+          const oHue = o > 8 ? '255,230,90' : '100,220,120';
+          ctx.fillStyle = `rgba(${oHue},${oA})`;
+          ctx.fillRect(x * T, y * T, T, T);
+        }
+      }
+    }
+    ctx.restore();
+  }
   
   // Vẽ legend graph coloring khi debug bật
   if(GS.graphColoring && GS.gcResult){
@@ -3743,6 +3866,7 @@ window.addEventListener('keydown', e=>{
   // Debug panel toggle
   if(e.key==='Tab'){ e.preventDefault(); toggleDebug(); return; }
   if(e.key==='g'||e.key==='G'){ toggleGraphColoring(); return; }
+  if(e.key==='i'||e.key==='I'){ toggleInfluenceOverlay(); return; }
   
   // Đặt bẫy
   if(e.key===' '||e.key==='Space'){ placeTrap(GS.myIdx); return; }
@@ -3859,6 +3983,10 @@ function updateDebugPanel(){
   document.getElementById('dbg-round').textContent=`Round: ${GS.round}/${CFG.BO3}`;
   document.getElementById('dbg-seq').textContent=`Seq: ${GS.players[GS.myIdx]?.inputSeq||0}`;
   document.getElementById('dbg-ping').textContent=`Ping: ${mqttPing}ms`;
+  const infMaxDEl = document.getElementById('dbg-inf-maxd');
+  const infMaxOEl = document.getElementById('dbg-inf-maxo');
+  const infCpuEl = document.getElementById('dbg-inf-cpu');
+  const infTargetEl = document.getElementById('dbg-inf-target');
 
   // Thống kê graph coloring
   const gc = GS.gcResult;
@@ -3952,6 +4080,21 @@ function updateDebugPanel(){
     const c = cd.chokeTarget;
     chokeCpuEl.textContent = c ? `CPU choke target: (${c.x},${c.y}) s=${c.score != null ? c.score : '--'}` : 'CPU choke target: --';
   }
+  if (infMaxDEl) {
+    const c = INF_MAP.maxDangerCell;
+    infMaxDEl.textContent = `Max danger: ${INF_MAP.maxDanger ?? 0}${c ? ` @(${c.x},${c.y})` : ''}`;
+  }
+  if (infMaxOEl) {
+    const c = INF_MAP.maxOpportunityCell;
+    infMaxOEl.textContent = `Max opportunity: ${INF_MAP.maxOpportunity ?? 0}${c ? ` @(${c.x},${c.y})` : ''}`;
+  }
+  if (infCpuEl && cpu) {
+    infCpuEl.textContent = `CPU danger cell: ${getCellDanger(cpu.x, cpu.y).toFixed(2)} | opp=${getCellOpportunity(cpu.x, cpu.y).toFixed(2)}`;
+  }
+  if (infTargetEl) {
+    const t = cd.target;
+    infTargetEl.textContent = t ? `Target opportunity: ${getCellOpportunity(t.x, t.y).toFixed(2)} | danger=${getCellDanger(t.x, t.y).toFixed(2)}` : 'Target opportunity: --';
+  }
   if(reasonEl) reasonEl.textContent = `Reason: ${cd.reason || '--'}`;
   if(mmEl) {
     const mm = cd.minimax || { on:false, depth:0, action:'--', score:0 };
@@ -3967,6 +4110,10 @@ function toggleGraphColoring(){
   GS.graphColoring=!GS.graphColoring;
   if(GS.graphColoring) buildGraphColoring();
   showHudMsg(GS.graphColoring?'Graph coloring BẬT':'Graph coloring TẮT');
+}
+function toggleInfluenceOverlay(){
+  INF_MAP.debugOverlay = !INF_MAP.debugOverlay;
+  showHudMsg(INF_MAP.debugOverlay ? 'Influence overlay BẬT' : 'Influence overlay TẮT');
 }
 // Kích hoạt debug overlay – tái dùng gcResult đã tính trong initRound
 function buildGraphColoring(){
@@ -4213,6 +4360,7 @@ function handleUpdate(msg){
   if(msg.treasureHolder!=null) GS.treasureHolder=msg.treasureHolder;
   if(msg.traps) GS.traps=msg.traps;
   if(msg.running!=null) GS.running=msg.running;
+  buildInfluenceMap();
 }
 
 // Monster sync
@@ -4223,6 +4371,7 @@ function handleMons(msg){
     m.px=m.x; m.py=m.y; m.lerpT=0;
     m.x=msg.mons[i].x; m.y=msg.mons[i].y;
   }
+  buildInfluenceMap();
 }
 
 // Kết thúc ván từ host
@@ -4261,6 +4410,7 @@ function handleLeave(msg){
 function handleTrapMsg(msg){
   if(GS.isHost) return;
   if(msg.traps) GS.traps=msg.traps;
+  buildInfluenceMap();
 }
 
 // Client nhận tín hiệu host tái sinh map
@@ -4272,6 +4422,7 @@ function handleRegenMap(msg){
   updateChokeCache();
   GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
   GS.graphColorMap = GS.gcResult.colorMap;
+  buildInfluenceMap();
   const cspRng = mkRng(GS.seed ^ 0xDEAD);
   const numP = Math.max(2, GS.players.length);
   const cspResult = cspSolve(GS.grid, GS.gcResult, GS.round, numP, cspRng, CFG.W, CFG.H);
