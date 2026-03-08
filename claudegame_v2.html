@@ -116,6 +116,26 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 .skill-chip b { color:#f7d36a; font-size:.74rem; }
 .skill-chip.ready { border-color:#37a766; box-shadow:0 0 0 1px #37a76655 inset; }
 .skill-chip.cd { border-color:#754646; color:#d7b9b9; }
+.key-badge {
+  display:inline-block; background:#22224a; border:1px solid #5555a0;
+  border-radius:3px; font-size:.58rem; padding:0 3px; margin-right:3px;
+  color:#b0c8ff; font-family:monospace; line-height:1.5; vertical-align:middle;
+}
+#hud-keybar {
+  position:fixed; bottom:68px; left:50%; transform:translateX(-50%);
+  font-size:.65rem; color:#90a8c8; display:flex; gap:6px;
+  flex-wrap:wrap; align-items:center; justify-content:center;
+  background:rgba(8,8,28,0.82); border:1px solid #3a3a6a;
+  border-radius:8px; padding:5px 14px; z-index:55;
+  pointer-events:none; white-space:nowrap;
+  box-shadow:0 2px 12px rgba(0,0,60,0.6);
+}
+#hud-keybar kbd {
+  background:#1e1e44; border:1px solid #5555a0; border-radius:4px;
+  font-size:.63rem; padding:1px 5px; color:#c0d8ff; font-family:monospace;
+  box-shadow:0 1px 0 #333388;
+}
+#hud-keybar .kb-sep { color:#2a3050; }
 #hud-states { font-size:.72rem; color:#a6c7ff; }
 #hud-objective {
   display:flex; gap:8px; align-items:center; flex:1; min-width:180px;
@@ -216,6 +236,21 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 
 /* ===================== SCROLLBAR ===================== */
 ::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:#2a2a5a; border-radius:2px; }
+
+/* ===================== MOBILE PERFORMANCE & UX ===================== */
+/* Tắt tap highlight màu xanh mặc định, user-select để tránh text selection khi chơi */
+* { -webkit-tap-highlight-color: transparent; }
+#game-screen, #canvas-wrap, #touch-ctrl { user-select: none; -webkit-user-select: none; }
+/* touch-action: none ngăn browser xử lý scroll/zoom khi chơi, giảm latency */
+#touch-ctrl button { touch-action: none; }
+/* Nút di chuyển: tăng lên 48x48 để dễ bấm hơn */
+#touch-move button { width:48px; height:48px; font-size:1.3rem; }
+/* Nút skill: tăng chiều cao để dễ chạm */
+#touch-act button { width:48px; height:40px; font-size:.62rem; }
+/* Ẩn keybar hint khi là touch device (set by JS checkMobile) */
+@media (hover: none) and (pointer: coarse) {
+  #hud-keybar { display: none !important; }
+}
 
 /* ===================== HELP MODAL ===================== */
 #help-overlay {
@@ -552,22 +587,29 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
     <div id="touch-ctrl">
       <div id="touch-move">
         <div></div>
-        <button ontouchstart="touchDir('up')" ontouchend="touchRelease('up')" onmousedown="touchDir('up')" onmouseup="touchRelease('up')">▲</button>
+        <button ontouchstart="touchDir('up',event)" ontouchend="touchRelease('up',event)" onmousedown="touchDir('up',event)" onmouseup="touchRelease('up',event)">▲</button>
         <div></div>
-        <button ontouchstart="touchDir('left')" ontouchend="touchRelease('left')" onmousedown="touchDir('left')" onmouseup="touchRelease('left')">◀</button>
-        <button ontouchstart="touchDir('down')" ontouchend="touchRelease('down')" onmousedown="touchDir('down')" onmouseup="touchRelease('down')">▼</button>
-        <button ontouchstart="touchDir('right')" ontouchend="touchRelease('right')" onmousedown="touchDir('right')" onmouseup="touchRelease('right')">▶</button>
+        <button ontouchstart="touchDir('left',event)" ontouchend="touchRelease('left',event)" onmousedown="touchDir('left',event)" onmouseup="touchRelease('left',event)">◀</button>
+        <button ontouchstart="touchDir('down',event)" ontouchend="touchRelease('down',event)" onmousedown="touchDir('down',event)" onmouseup="touchRelease('down',event)">▼</button>
+        <button ontouchstart="touchDir('right',event)" ontouchend="touchRelease('right',event)" onmousedown="touchDir('right',event)" onmouseup="touchRelease('right',event)">▶</button>
       </div>
       <div id="touch-act">
-        <button ontouchstart="touchAction('dash')" onmousedown="touchAction('dash')">Dash</button>
-        <button ontouchstart="touchAction('shock')" onmousedown="touchAction('shock')">Shock</button>
-        <button ontouchstart="touchAction('shield')" onmousedown="touchAction('shield')">Shield</button>
-        <button ontouchstart="touchAction('push')" onmousedown="touchAction('push')">Push</button>
-        <button ontouchstart="touchAction('lasso')" onmousedown="touchAction('lasso')">Lasso</button>
-        <button ontouchstart="touchAction('trap')" onmousedown="touchAction('trap')">Trap</button>
-        <button ontouchstart="touchAction('interact')" onmousedown="touchAction('interact')">Interact</button>
+        <button ontouchstart="touchAction('dash',event)" onmousedown="touchAction('dash',event)">🏃Sprint</button>
+        <button ontouchstart="touchAction('shock',event)" onmousedown="touchAction('shock',event)">📡Radar</button>
+        <button ontouchstart="touchAction('shield',event)" onmousedown="touchAction('shield',event)">🛡Shield</button>
+        <button ontouchstart="touchAction('push',event)" onmousedown="touchAction('push',event)">🧹Clean</button>
+        <button ontouchstart="touchAction('lasso',event)" onmousedown="touchAction('lasso',event)">🧲Magnet</button>
+        <button ontouchstart="touchAction('trap',event)" onmousedown="touchAction('trap',event)">Trap</button>
+        <button ontouchstart="touchAction('interact',event)" onmousedown="touchAction('interact',event)">Interact</button>
       </div>
     </div>
+  </div>
+  <div id="hud-keybar">
+    <kbd>WASD</kbd> di chuyển <span class="kb-sep">|</span>
+    <kbd>F</kbd> interact <span class="kb-sep">|</span>
+    <kbd>Space</kbd> bẫy <span class="kb-sep">|</span>
+    <kbd>Shift/Q/E/R/T</kbd> kỹ năng <span class="kb-sep">|</span>
+    <kbd>H</kbd> help
   </div>
   <div id="hud">
     <div class="hud-item">🎮 Ván <span id="hud-round">1</span>/3</div>
@@ -575,11 +617,11 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
     <div class="hud-item">⏱ <span id="hud-timer">0</span>s</div>
     <div id="hud-goal">🏆 TÌM KHO BÁU VÀNG</div>
     <div id="hud-pvp">
-      <div class="skill-chip" id="skill-dash">Dash<br><b>Ready</b></div>
-      <div class="skill-chip" id="skill-shock">Shock<br><b>Ready</b></div>
-      <div class="skill-chip" id="skill-shield">Shield<br><b>Ready</b></div>
-      <div class="skill-chip" id="skill-push">Push<br><b>Ready</b></div>
-      <div class="skill-chip" id="skill-lasso">Lasso<br><b>Ready</b></div>
+      <div class="skill-chip" id="skill-dash" data-key="Shift">🏃 Sprint<br><b>Sẵn</b></div>
+      <div class="skill-chip" id="skill-shock" data-key="Q">📡 Radar<br><b>Sẵn</b></div>
+      <div class="skill-chip" id="skill-shield" data-key="E">🛡 Shield<br><b>Sẵn</b></div>
+      <div class="skill-chip" id="skill-push" data-key="R">🧹 Clean<br><b>Sẵn</b></div>
+      <div class="skill-chip" id="skill-lasso" data-key="T">🧲 Magnet<br><b>Sẵn</b></div>
       <div id="hud-states">State: --</div>
       <div id="hud-energy-wrap">
         <span class="mini-label">⚡EN</span>
@@ -654,11 +696,11 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
     <table class="help-table">
       <tr><td>W A S D</td><td>Di chuyển lên / trái / xuống / phải</td></tr>
       <tr><td>↑ ↓ ← →</td><td>Di chuyển (Arrow keys)</td></tr>
-      <tr><td>Shift</td><td>⚡ Dash — lướt nhanh 2 ô <span class="help-tag energy">25⚡</span> <span class="help-tag cd">CD 4s</span></td></tr>
-      <tr><td>Q</td><td>⚡ Shock — chớp giật stunne kẻ địch xung quanh <span class="help-tag energy">30⚡</span> <span class="help-tag cd">CD 5s</span></td></tr>
-      <tr><td>E</td><td>🛡 Shield — giáp miễn nhiễm bị cướp kho báu <span class="help-tag energy">20⚡</span> <span class="help-tag cd">CD 6s</span></td></tr>
-      <tr><td>R</td><td>💥 Push — đẩy kẻ địch kề sát; đẩy vào tường → choáng <span class="help-tag energy">30⚡</span> <span class="help-tag cd">CD 7s</span></td></tr>
-      <tr><td>T</td><td>🪢 Lasso — quăng dây 4 ô theo hướng di chuyển: trúng kho báu dưới đất → nhặt ngay; trúng người cầm → cướp tức thì; trúng địch thường → kéo 1 ô về phía bạn <span class="help-tag energy">35⚡</span> <span class="help-tag cd">CD 9s</span></td></tr>
+      <tr><td>Shift</td><td>🏃 <b>Sprint</b> — tăng tốc di chuyển 40% trong 2 giây <span class="help-tag energy">20⚡</span> <span class="help-tag cd">CD 6s</span></td></tr>
+      <tr><td>Q</td><td>📡 <b>Radar</b> — hiện mũi tên chỉ hướng kho báu / người cầm đồ trong 2.5 giây <span class="help-tag energy">20⚡</span> <span class="help-tag cd">CD 8s</span></td></tr>
+      <tr><td>E</td><td>🛡 <b>Shield</b> — kích hoạt giáp 1.5s: miễn nhiễm bẫy, contest, lasso và quái <span class="help-tag energy">20⚡</span> <span class="help-tag cd">CD 10s</span></td></tr>
+      <tr><td>R</td><td>🧹 <b>Clean Step</b> — xóa bẫy gần nhất (≤2 ô) nếu có; không có bẫy → bước an toàn 2s (miễn nhiễm bẫy &amp; quái) <span class="help-tag energy">25⚡</span> <span class="help-tag cd">CD 7s</span></td></tr>
+      <tr><td>T</td><td>🧲 <b>Magnet</b> — hút kho báu đang nằm trên sàn trong vòng 2 ô Manhattan vào người ngay lập tức <span class="help-tag energy">30⚡</span> <span class="help-tag cd">CD 9s</span></td></tr>
       <tr><td>F</td><td>🤝 Interact — tranh chấp / nhặt kho báu</td></tr>
       <tr><td>Space</td><td>🪤 Đặt bẫy — làm chậm kẻ địch đi qua</td></tr>
       <tr><td>H hoặc ?</td><td>Mở / đóng bảng hướng dẫn này</td></tr>
@@ -685,10 +727,10 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
     <table class="help-table">
       <tr><td>Contest</td><td>Đứng kề sát người cầm kho báu → tranh chấp 2 giây → nếu thành công thì cướp kho</td></tr>
       <tr><td>Channel</td><td>Cầm kho báu + đứng tại base → giữ 1.5 giây → ghi điểm (bị ngắt nếu enemy kề sát)</td></tr>
-      <tr><td>Shock (Q)</td><td>Choáng enemy kề sát ~1 giây → dừng di chuyển &amp; ngắt contest/channel của họ</td></tr>
-      <tr><td>Push (R)</td><td>Đẩy enemy ra xa 2 ô; nếu chạm tường → <strong>wall-stun</strong> ~0.5 giây</td></tr>
-      <tr><td>Shield (E)</td><td>Trong thời gian shield, enemy không thể Contest cướp kho báu của bạn</td></tr>
-      <tr><td>Dash (Shift)</td><td>Lướt nhanh theo hướng đang di chuyển — cả tấn công lẫn tẩu thoát</td></tr>
+      <tr><td>Radar (Q)</td><td>Bật Radar 2.5s, hiện mũi tên chỉ hướng kho báu — rất hữu ích khi không biết kho báu nằm ở đâu</td></tr>
+      <tr><td>Clean (R)</td><td>Xóa bẫy gần (≤2 ô) nếu có; không có bẫy → bật bước an toàn 2s (miễn nhiễm bẫy &amp; quái)</td></tr>
+      <tr><td>Shield (E)</td><td>Trong thời gian Shield: miễn nhiễm bẫy, contest, Magnet và va chạm quái</td></tr>
+      <tr><td>Sprint (Shift)</td><td>Tăng tốc 40% trong 2 giây — dùng để đuổi địch hoặc tẩu thoát nhanh chóng</td></tr>
     </table>
 
     <h3>👾 Quái vật &amp; Bẫy</h3>
@@ -700,11 +742,11 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 
     <h3>💡 Mẹo chiến thuật</h3>
     <ul style="font-size:.83rem;color:#ccc;line-height:1.8;padding-left:16px;">
-      <li>Dùng <strong>Push</strong> khi kẻ địch đứng gần tường để gây wall-stun — cơ hội tranh chấp miễn phí.</li>
-      <li>Giữ <strong>Shield</strong> khi sắp về base để tránh bị cướp kho báu ở chặng cuối.</li>
+      <li>Dùng <strong>Magnet</strong> khi cảm thấy kho báu gần — hút vào người mà không cần đi tới ô đó.</li>
+      <li>Giữ <strong>Shield</strong> khi sắp về base để bảo vệ kho báu khỏi bẫy và contest từ kẻ địch.</li>
       <li>Kiểm soát <strong>Zone</strong> khi energy thấp — hồi nhanh gấp đôi giúp dùng skill liên tục.</li>
       <li><strong>Bait</strong> enemy dùng skill trước, sau đó mới vào contest khi họ hết cooldown.</li>
-      <li>Đặt bẫy tại các <em>choke point</em> hẹp để cản đường enemy hiệu quả nhất.</li>
+      <li>Dùng <strong>Clean Step</strong> khi thấy bẫy trên đường — hoặc bật safe step trước khi qua vùng nguy hiểm.</li>
     </ul>
 
     <div style="text-align:center;margin-top:18px;">
@@ -781,6 +823,12 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 <script>
 "use strict";
 /* ================================================================
+   DEVICE & PERFORMANCE FLAGS
+   ================================================================ */
+const IS_TOUCH_DEVICE = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+const LOW_POWER_MODE  = IS_TOUCH_DEVICE; // có thể override thủ công: let LOW_POWER_MODE = true;
+
+/* ================================================================
    CONFIG – tất cả hằng số game
    ================================================================ */
 const CFG = {
@@ -799,23 +847,28 @@ const CFG = {
   TRAP_TTL: 10000,               // thời gian sống của bẫy (ms)
   PLAYER_MOVE_BASE_MS: 120,
   SLOW_DURATION_MS: 1000,
-  DASH_DISTANCE: 2,
-  DASH_COOLDOWN_MS: 6000,
-  DASH_ENERGY: 25,               // energy cost for Dash
-  SHOCK_RANGE_MANHATTAN: 1,
-  SHOCK_STUN_MS: 800,
-  SHOCK_COOLDOWN_MS: 8000,
-  SHOCK_ENERGY: 30,              // energy cost for Shock
-  SHIELD_DURATION_MS: 1200,
+  // Sprint – tăng tốc di chuyển 40% trong 2 giây
+  SPRINT_DURATION_MS: 2000,
+  SPRINT_SPEED_MULT: 0.6,        // hệ số delay khi sprint (nhỏ hơn = nhanh hơn)
+  SPRINT_COOLDOWN_MS: 6000,
+  SPRINT_ENERGY: 20,
+  // Radar – hiện mũi tên chỉ hướng kho báu / người cầm đồ 2.5 giây
+  RADAR_DURATION_MS: 2500,
+  RADAR_COOLDOWN_MS: 8000,
+  RADAR_ENERGY: 20,
+  // Shield – giáp miễn nhiễm bẫy, contest, lasso, quái (duration tăng lên 1.5s)
+  SHIELD_DURATION_MS: 1500,
   SHIELD_COOLDOWN_MS: 10000,
-  SHIELD_ENERGY: 20,             // energy cost for Shield
-  PUSH_DISTANCE: 2,              // cells pushed per use
-  PUSH_COOLDOWN_MS: 7000,
-  PUSH_ENERGY: 30,               // energy cost for Push
-  PUSH_WALL_STUN_MS: 500,        // stun if pushed into wall
-  LASSO_DISTANCE: 4,              // rope reach in tiles (cells in facing direction)
-  LASSO_COOLDOWN_MS: 9000,        // lasso cooldown ms
-  LASSO_ENERGY: 35,               // energy cost for Lasso
+  SHIELD_ENERGY: 20,
+  // Clean Step – xóa bẫy gần nhất ≤2 ô, hoặc bật safe-step 2s
+  CLEANSTEP_RANGE: 2,
+  CLEANSTEP_SAFE_MS: 2000,
+  CLEANSTEP_COOLDOWN_MS: 7000,
+  CLEANSTEP_ENERGY: 25,
+  // Magnet – hút kho báu đang nằm trong vòng 2 ô Manhattan vào người
+  MAGNET_RANGE: 2,
+  MAGNET_COOLDOWN_MS: 9000,
+  MAGNET_ENERGY: 30,
   ENERGY_MAX: 100,
   ENERGY_REGEN_PER_TICK: 1,      // energy per regen tick
   ENERGY_REGEN_INTERVAL_MS: 80,  // regen interval → ~12.5/s at full speed
@@ -3477,6 +3530,10 @@ function makePlayer(idx, name, isBot=false, clientId='') {
     shieldCdUntil: 0,
     contestCdUntil: 0,
     pushCdUntil: 0,
+    lassoCdUntil: 0,
+    sprintUntil: 0,
+    radarUntil: 0,
+    safeStepUntil: 0,
     energy: CFG.ENERGY_MAX,
     moveNextAt: 0,
     lastMoveDir: { dx: 0, dy: -1 },
@@ -3514,35 +3571,45 @@ function isSlowed(player, now = Date.now()) {
 }
 
 function getMoveDelayMultiplier(player, now = Date.now()) {
-  return isSlowed(player, now) ? 1.7 : 1;
+  if (isSlowed(player, now)) return 1.7;
+  if ((player.sprintUntil || 0) > now) return CFG.SPRINT_SPEED_MULT;
+  return 1;
 }
 
-function canUseDash(player, now = Date.now()) {
+function canUseSprint(player, now = Date.now()) {
   return !!player && !isStunned(player, now) && now >= (player.dashCdUntil || 0)
-    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.DASH_ENERGY;
+    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.SPRINT_ENERGY;
 }
 
-function canUseShock(player, now = Date.now()) {
+// Keep old alias for backward compat (online sync references)
+const canUseDash = canUseSprint;
+
+function canUseRadar(player, now = Date.now()) {
   return !!player && !isStunned(player, now) && now >= (player.shockCdUntil || 0)
-    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.SHOCK_ENERGY;
+    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.RADAR_ENERGY;
 }
+
+const canUseShock = canUseRadar;
 
 function canUseShield(player, now = Date.now()) {
   return !!player && !isStunned(player, now) && now >= (player.shieldCdUntil || 0)
     && (player.energy ?? CFG.ENERGY_MAX) >= CFG.SHIELD_ENERGY;
 }
 
-function canUsePush(player, now = Date.now()) {
+function canUseCleanStep(player, now = Date.now()) {
   return !!player && !isStunned(player, now) && now >= (player.pushCdUntil || 0)
-    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.PUSH_ENERGY;
+    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.CLEANSTEP_ENERGY;
 }
 
-function canUseLasso(player, now = Date.now()) {
-  // Cannot use while already holding the treasure
+const canUsePush = canUseCleanStep;
+
+function canUseMagnet(player, now = Date.now()) {
   return !!player && !player.has && !isStunned(player, now)
     && now >= (player.lassoCdUntil || 0)
-    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.LASSO_ENERGY;
+    && (player.energy ?? CFG.ENERGY_MAX) >= CFG.MAGNET_ENERGY;
 }
+
+const canUseLasso = canUseMagnet;
 
 function drainEnergy(player, amount) {
   if (!player) return;
@@ -3787,7 +3854,8 @@ function initRound(seed, playersData, keepScore=false) {
     p.has=false; p.trapCount=0; p.graceUntil=0;
     p.stunnedUntil=0; p.shieldUntil=0; p.slowUntil=0;
     p.dashCdUntil=0; p.shockCdUntil=0; p.shieldCdUntil=0;
-    p.contestCdUntil=0; p.pushCdUntil=0;
+    p.contestCdUntil=0; p.pushCdUntil=0; p.lassoCdUntil=0;
+    p.sprintUntil=0; p.radarUntil=0; p.safeStepUntil=0;
     p.energy=CFG.ENERGY_MAX; p.moveNextAt=0; p.lastMoveDir={dx:0,dy:-1};
     setPlayerGrace(p, CFG.PLAYER_GRACE_ROUND_START_MS, now);
     if(!keepScore) p.score=0;
@@ -4302,49 +4370,38 @@ function energyRegenTick() {
   }
 }
 
-function useDash(pidx, reqDir = null) {
+// ── SPRINT – tăng tốc di chuyển 40% trong 2 giây ──
+function useSprint(pidx) {
   const now = Date.now();
   const p = GS.players[pidx];
-  if (!p || !canUseDash(p, now)) return false;
-  const dir = reqDir || p.lastMoveDir || { dx: 0, dy: -1 };
-  if (!dir || (dir.dx === 0 && dir.dy === 0)) return false;
-  p.dashCdUntil = now + CFG.DASH_COOLDOWN_MS;
-  drainEnergy(p, CFG.DASH_ENERGY);
-
-  let moved = 0;
-  for (let i = 0; i < CFG.DASH_DISTANCE; i++) {
-    if (!doMovePlayer(pidx, dir.dx, dir.dy, { noMoveCd: true, source: 'dash' })) break;
-    moved++;
-  }
-  queueSyncEvent('skill_dash', { playerIdx: pidx, dx: dir.dx, dy: dir.dy, moved });
-  if (moved > 0) {
-    showHudMsg(`${p.name} dùng Dash!`);
-    vfxDash(p, dir, moved);
-  }
-  return moved > 0;
-}
-
-function useShockPulse(pidx) {
-  const now = Date.now();
-  const p = GS.players[pidx];
-  if (!p || !canUseShock(p, now)) return false;
-  p.shockCdUntil = now + CFG.SHOCK_COOLDOWN_MS;
-  drainEnergy(p, CFG.SHOCK_ENERGY);
-  const victims = [];
-  for (const e of GS.players) {
-    if (!e || e.idx === pidx) continue;
-    if (manhattan(p, e) > CFG.SHOCK_RANGE_MANHATTAN) continue;
-    if (hasShield(e, now)) continue;
-    e.stunnedUntil = Math.max(e.stunnedUntil || 0, now + CFG.SHOCK_STUN_MS);
-    victims.push(e.idx);
-    if (GS.contest?.active && GS.contest.actorIdx === e.idx) cancelContest('actor_stunned', true);
-    if (GS.goalChannel?.active && GS.goalChannel.playerIdx === e.idx) cancelGoalChannel('stunned');
-  }
-  queueSyncEvent('skill_shock', { playerIdx: pidx, victims });
-  showHudMsg(victims.length ? `${p.name} làm choáng ${victims.length} mục tiêu!` : `${p.name} dùng Shock Pulse`);
-  vfxShock(p, victims);
+  if (!p || !canUseSprint(p, now)) return false;
+  p.dashCdUntil = now + CFG.SPRINT_COOLDOWN_MS;
+  p.sprintUntil = now + CFG.SPRINT_DURATION_MS;
+  drainEnergy(p, CFG.SPRINT_ENERGY);
+  queueSyncEvent('skill_dash', { playerIdx: pidx, sprintUntil: p.sprintUntil });
+  showHudMsg(`${p.name} dùng Sprint! 🏃`);
+  vfxSprint(p);
   return true;
 }
+
+// Keep alias for requestUseSkill dispatch reference safety
+const useDash = useSprint;
+
+// ── RADAR – hiện mũi tên chỉ hướng kho báu / người cầm đồ 2.5 giây ──
+function useRadar(pidx) {
+  const now = Date.now();
+  const p = GS.players[pidx];
+  if (!p || !canUseRadar(p, now)) return false;
+  p.shockCdUntil = now + CFG.RADAR_COOLDOWN_MS;
+  p.radarUntil = now + CFG.RADAR_DURATION_MS;
+  drainEnergy(p, CFG.RADAR_ENERGY);
+  queueSyncEvent('skill_shock', { playerIdx: pidx, radarUntil: p.radarUntil });
+  showHudMsg(`${p.name} bật Radar! 📡`);
+  vfxRadar(p);
+  return true;
+}
+
+const useShockPulse = useRadar;
 
 function useShield(pidx) {
   const now = Date.now();
@@ -4354,149 +4411,87 @@ function useShield(pidx) {
   p.shieldUntil = now + CFG.SHIELD_DURATION_MS;
   drainEnergy(p, CFG.SHIELD_ENERGY);
   queueSyncEvent('skill_shield', { playerIdx: pidx, until: p.shieldUntil });
-  showHudMsg(`${p.name} kích hoạt Shield`);
+  showHudMsg(`${p.name} kích hoạt Shield 🛡`);
   vfxShield(p);
   return true;
 }
 
 /* ================================================================
-   PUSH SKILL – đẩy địch ra xa, gây stun nếu va tường.
-   Thuật toán: 4-directional forced-walk, terminate on wall collision.
-   Interaction: Shield blocks; holder drops treasure when pushed.
+   CLEAN STEP – xóa bẫy gần nhất trong bán kính 2 ô.
+   Nếu không có bẫy nào gần → bật safe-step 2 giây (miễn nhiễm bẫy & quái).
    ================================================================ */
-function usePush(pidx) {
+function useCleanStep(pidx) {
   const now = Date.now();
   const p = GS.players[pidx];
-  if (!p || !canUsePush(p, now)) return false;
-  p.pushCdUntil = now + CFG.PUSH_COOLDOWN_MS;
-  drainEnergy(p, CFG.PUSH_ENERGY);
-  const victims = [];
-  for (const e of GS.players) {
-    if (!e || e.idx === pidx) continue;
-    if (manhattan(p, e) > 1) continue;
-    if (hasShield(e, now)) continue;
-    // Determine push direction (4-directional from pusher to target)
-    let fx = Math.sign(e.x - p.x);
-    let fy = Math.sign(e.y - p.y);
-    // Resolve diagonal → prefer horizontal then vertical
-    if (fx !== 0 && fy !== 0) { fy = 0; }
-    if (fx === 0 && fy === 0) { fy = e.y >= p.y ? 1 : -1; }
-    let hitWall = false;
-    for (let step = 0; step < CFG.PUSH_DISTANCE; step++) {
-      const nx = e.x + fx, ny = e.y + fy;
-      if (nx < 0 || nx >= CFG.W || ny < 0 || ny >= CFG.H ||
-          GS.grid[ny * CFG.W + nx] === CFG.T_WALL) {
-        hitWall = true;
-        break;
-      }
-      e.px = e.x; e.py = e.y; e.lerpT = 0;
-      e.x = nx; e.y = ny;
-      e.lastMoveDir = { dx: fx, dy: fy };
+  if (!p || !canUseCleanStep(p, now)) return false;
+  p.pushCdUntil = now + CFG.CLEANSTEP_COOLDOWN_MS;
+  drainEnergy(p, CFG.CLEANSTEP_ENERGY);
+
+  // Tìm bẫy gần nhất trong tầm
+  let removedTrap = null;
+  let bestDist = CFG.CLEANSTEP_RANGE + 1;
+  for (const t of GS.traps) {
+    const d = manhattan(p, t);
+    if (d <= CFG.CLEANSTEP_RANGE && d < bestDist) {
+      bestDist = d;
+      removedTrap = t;
     }
-    // Wall collision → brief stun (bait mechanic: push into wall corner)
-    if (hitWall) {
-      e.stunnedUntil = Math.max(e.stunnedUntil || 0, now + CFG.PUSH_WALL_STUN_MS);
-    }
-    // Treasure holder drops on push
-    if (e.has) dropTreasureAtHolder(e, 'push');
-    // Interrupt contest/channel of pushed player
-    if (GS.contest?.active && (GS.contest.actorIdx === e.idx || GS.contest.holderIdx === e.idx))
-      cancelContest('push', false);
-    if (GS.goalChannel?.active && GS.goalChannel.playerIdx === e.idx)
-      cancelGoalChannel('push');
-    victims.push(e.idx);
   }
-  queueSyncEvent('skill_push', { playerIdx: pidx, victims });
-  showHudMsg(victims.length
-    ? `${p.name} đẩy ${victims.length} mục tiêu! ➡️`
-    : `${p.name} dùng Push (miss)`);
-  vfxPush(p, victims);
+
+  if (removedTrap) {
+    const ti = GS.traps.indexOf(removedTrap);
+    if (ti >= 0) GS.traps.splice(ti, 1);
+    const owner = GS.players[removedTrap.owner];
+    if (owner) owner.trapCount = Math.max(0, owner.trapCount - 1);
+    buildInfluenceMap();
+    queueSyncEvent('skill_push', { playerIdx: pidx, removedTrap: { x: removedTrap.x, y: removedTrap.y } });
+    showHudMsg(`${p.name} xóa bẫy gần đó! 🧹`);
+    vfxCleanStep(p, removedTrap.x, removedTrap.y, true);
+  } else {
+    p.safeStepUntil = now + CFG.CLEANSTEP_SAFE_MS;
+    queueSyncEvent('skill_push', { playerIdx: pidx, safeStepUntil: p.safeStepUntil });
+    showHudMsg(`${p.name} bước an toàn 2s! 🧹`);
+    vfxCleanStep(p, p.x, p.y, false);
+  }
   return true;
 }
 
+const usePush = useCleanStep;
+
 /* ================================================================
-   LASSO SKILL – quăng dây thừng dài 4 ô theo hướng di chuyển.
-   Thuật toán: tia thẳng theo lastMoveDir, dừng tại tường.
-   Kết quả:
-     • Trúng kho báu dưới đất → nhặt ngay (như bước lên ô kho báu)
-     • Trúng kẻ cầm kho báu  → cướp tức thì (không cần contest)
-     • Trúng kẻ địch thường  → kéo địch 1 ô về phía người dùng
-   Shield chặn tất cả các hiệu ứng trúng.
+   MAGNET – hút kho báu đang nằm trên sàn trong vòng MAGNET_RANGE ô.
+   Không thể dùng khi đang cầm kho báu. Không cướp từ người khác.
    ================================================================ */
-function useLasso(pidx) {
+function useMagnet(pidx) {
   const now = Date.now();
   const p = GS.players[pidx];
-  if (!p || !canUseLasso(p, now)) return false;
-  p.lassoCdUntil = now + CFG.LASSO_COOLDOWN_MS;
-  drainEnergy(p, CFG.LASSO_ENERGY);
+  if (!p || !canUseMagnet(p, now)) return false;
+  p.lassoCdUntil = now + CFG.MAGNET_COOLDOWN_MS;
+  drainEnergy(p, CFG.MAGNET_ENERGY);
 
-  const dir = p.lastMoveDir || { dx: 1, dy: 0 };
-  const { dx, dy } = dir;
-  let hitX = p.x + dx, hitY = p.y + dy; // default tip = 1 step (so vfx always shows rope)
-  let result = null; // 'treasure' | 'steal' | 'pull' | 'blocked' | null(miss)
-
-  for (let i = 1; i <= CFG.LASSO_DISTANCE; i++) {
-    const cx = p.x + dx * i, cy = p.y + dy * i;
-    if (cx < 0 || cx >= CFG.W || cy < 0 || cy >= CFG.H) break;
-    if (GS.grid[cy * CFG.W + cx] === CFG.T_WALL) break;
-    hitX = cx; hitY = cy;
-
-    // ── Trúng kho báu đang nằm dưới đất ──
-    if (GS.treasureHolder === -1 && GS.treasure && GS.treasure.x === cx && GS.treasure.y === cy) {
+  if (GS.treasureHolder === -1 && GS.treasure) {
+    const d = manhattan(p, GS.treasure);
+    if (d > 0 && d <= CFG.MAGNET_RANGE) {
+      const tx = GS.treasure.x, ty = GS.treasure.y;
       p.has = true;
       GS.treasureHolder = pidx;
       GS.goalChannel = null;
-      result = 'treasure';
-      queueSyncEvent('lasso_treasure', { playerIdx: pidx, tx: cx, ty: cy });
-      showHudMsg(`${p.name} móc kho báu bằng dây thừng! 🪢`);
+      queueSyncEvent('skill_lasso', { playerIdx: pidx, tx, ty });
+      showHudMsg(`${p.name} hút kho báu bằng Nam châm! 🧲`);
+      vfxMagnet(p, tx, ty, true);
       if (GS.mode === 'online' && GS.isHost) broadcastState();
       setTimeout(regenerateMap, 600);
-      break;
-    }
-
-    // ── Trúng người chơi ──
-    const enemy = GS.players.find(e => e && e.idx !== pidx && e.x === cx && e.y === cy);
-    if (enemy) {
-      if (hasShield(enemy, now)) {
-        result = 'blocked';
-        queueSyncEvent('lasso_blocked', { playerIdx: pidx, targetIdx: enemy.idx });
-        showHudMsg(`${p.name} quăng dây nhưng bị Shield chặn! 🛡`);
-        break;
-      }
-      if (enemy.has) {
-        // Cướp kho báu
-        enemy.has = false;
-        p.has = true;
-        GS.treasureHolder = pidx;
-        setPlayerGrace(enemy, CFG.TREASURE_DROP_GRACE_MS);
-        if (GS.contest?.active &&
-            (GS.contest.holderIdx === enemy.idx || GS.contest.actorIdx === enemy.idx))
-          cancelContest('lasso', false);
-        if (GS.goalChannel?.active && GS.goalChannel.playerIdx === enemy.idx)
-          cancelGoalChannel('lasso');
-        result = 'steal';
-        queueSyncEvent('lasso_steal', { playerIdx: pidx, targetIdx: enemy.idx, tx: cx, ty: cy });
-        showHudMsg(`${p.name} cướp kho báu từ ${enemy.name} bằng dây thừng! 🪢`);
-      } else {
-        // Kéo địch 1 ô về phía người quăng
-        const nx = enemy.x - dx, ny = enemy.y - dy;
-        if (nx >= 0 && nx < CFG.W && ny >= 0 && ny < CFG.H
-            && GS.grid[ny * CFG.W + nx] !== CFG.T_WALL) {
-          enemy.px = enemy.x; enemy.py = enemy.y; enemy.lerpT = 0;
-          enemy.x = nx; enemy.y = ny;
-          enemy.lastMoveDir = { dx: -dx, dy: -dy };
-        }
-        result = 'pull';
-        queueSyncEvent('lasso_pull', { playerIdx: pidx, targetIdx: enemy.idx, tx: cx, ty: cy });
-        showHudMsg(`${p.name} kéo ${enemy.name} bằng dây thừng! 🪢`);
-      }
-      break;
+      return true;
     }
   }
 
-  vfxLasso(p, hitX, hitY, result);
+  queueSyncEvent('skill_lasso', { playerIdx: pidx, miss: true });
+  showHudMsg(`${p.name} dùng Nam châm — không có kho báu trong tầm`);
+  vfxMagnet(p, p.x, p.y, false);
   return true;
 }
+
+const useLasso = useMagnet;
 
 // Di chuyển người chơi (human local)
 function tryMove(pidx, dx, dy) {
@@ -4585,9 +4580,9 @@ function checkStepOnTrap(pidx) {
   for(let i=GS.traps.length-1;i>=0;i--){
     const t=GS.traps[i];
     if(t.x===p.x && t.y===p.y){
-      if(hasShield(p, now)){
+      if(hasShield(p, now) || (p.safeStepUntil || 0) > now){
         queueSyncEvent('trap_hit', { playerIdx: pidx, trapOwner: t.owner, x: p.x, y: p.y, blockedByShield: true });
-        showHudMsg(`${p.name} chặn bẫy bằng Shield!`);
+        showHudMsg(`${p.name} chặn bẫy! 🛡`);
       } else {
         if(p.has){
           dropTreasureAtHolder(p, 'trap');
@@ -4644,11 +4639,11 @@ function requestUseSkill(skill, pidx = GS.myIdx) {
     return true;
   }
   let ok = false;
-  if (skill === 'dash') ok = useDash(pidx);
-  else if (skill === 'shock') ok = useShockPulse(pidx);
+  if (skill === 'dash') ok = useSprint(pidx);
+  else if (skill === 'shock') ok = useRadar(pidx);
   else if (skill === 'shield') ok = useShield(pidx);
-  else if (skill === 'push') ok = usePush(pidx);
-  else if (skill === 'lasso') ok = useLasso(pidx);
+  else if (skill === 'push') ok = useCleanStep(pidx);
+  else if (skill === 'lasso') ok = useMagnet(pidx);
   if (ok && GS.mode === 'online' && GS.isHost) broadcastState(0, `skill_${skill}`);
   return ok;
 }
@@ -4800,11 +4795,18 @@ function hitPlayerByMonster(p, monster = null) {
   const now = Date.now();
   if (isPlayerInGrace(p, now)) return false;
   let droppedTreasure = false;
+  const immune = hasShield(p, now) || (p.safeStepUntil || 0) > now;
+
+  if (immune) {
+    showHudMsg(`${p.name} chặn quái! 🛡`);
+    setPlayerGrace(p, CFG.PLAYER_GRACE_MONSTER_HIT_MS);
+    return false;
+  }
 
   if (p.has) {
     droppedTreasure = dropTreasureAtHolder(p, 'monster');
     showHudMsg(`${p.name} bị quái ép rơi kho báu! 👹`);
-  } else if (!hasShield(p, now)) {
+  } else {
     p.slowUntil = Math.max(p.slowUntil || 0, now + CFG.SLOW_DURATION_MS);
     // Push nhẹ 1 ô ra xa quái để tạo pressure thay vì reset cứng.
     if (monster) {
@@ -5157,6 +5159,48 @@ function chooseSafestNearbyCellAvoidChoke(cpu, radius = 4) {
   return best;
 }
 
+// Tìm điểm trốn chạy thông minh: di chuyển ra xa nguồn nguy hiểm chính (quái/bẫy)
+// và sử dụng BFS để đảm bảo đến được, tránh ô choke.
+function chooseEvadeTarget(cpu, radius = 5) {
+  // Tìm nguồn nguy hiểm gần nhất: quái vật hoặc bẫy của đối thủ.
+  let threatX = null, threatY = null, threatDist = 9999;
+  for (const m of GS.monsters) {
+    const d = Math.abs(m.x - cpu.x) + Math.abs(m.y - cpu.y);
+    if (d < threatDist) { threatDist = d; threatX = m.x; threatY = m.y; }
+  }
+  for (const t of GS.traps) {
+    if (t.owner === cpu.idx) continue; // Bỏ qua bẫy của chính mình
+    const d = Math.abs(t.x - cpu.x) + Math.abs(t.y - cpu.y);
+    if (d < threatDist) { threatDist = d; threatX = t.x; threatY = t.y; }
+  }
+  if (threatX == null) return chooseSafestNearbyCellAvoidChoke(cpu, radius);
+
+  // Tìm ô tốt nhất trong BFS từ CPU, ưu tiên xa nguồn nguy hiểm.
+  const base = CFG.PLAYER_BASES[cpu.idx];
+  let best = null, bestScore = -1e9;
+  for (let y = Math.max(1, cpu.y - radius); y <= Math.min(CFG.H - 2, cpu.y + radius); y++) {
+    for (let x = Math.max(1, cpu.x - radius); x <= Math.min(CFG.W - 2, cpu.x + radius); x++) {
+      if (GS.grid[y * CFG.W + x] === CFG.T_WALL) continue;
+      const dCpu = Math.abs(x - cpu.x) + Math.abs(y - cpu.y);
+      if (dCpu === 0) continue;
+      const dThreat = Math.abs(x - threatX) + Math.abs(y - threatY);
+      const chokePenalty = isCellChokePoint(x, y) ? 18 : 0;
+      const dangerPenalty = getCellDanger(x, y) * 2.8;
+      // Phạt thêm nếu đang đi về phía threat (dThreat nhỏ hơn dist hiện tại của CPU đến threat)
+      const currentThreatDist = Math.abs(cpu.x - threatX) + Math.abs(cpu.y - threatY);
+      const approachPenalty = dThreat < currentThreatDist ? 20 : 0;
+      const score = dThreat * 2.5        // xa threat là tốt
+        - dangerPenalty
+        - chokePenalty
+        - approachPenalty
+        - (nearestTrapDist(cpu, x, y) <= 1 ? 15 : 0)
+        - dCpu * 0.3;                    // không đi quá xa
+      if (score > bestScore) { bestScore = score; best = { x, y }; }
+    }
+  }
+  return best || chooseSafestNearbyCellAvoidChoke(cpu, radius);
+}
+
 function getBestChokeForCpu(cpu, scorer, limit = 18) {
   if (!cpu || !CHOKE_CACHE.points.length) return null;
   let best = null;
@@ -5179,6 +5223,30 @@ function predictHolderRoute(holder, targetBase) {
     if (route.length >= 16) break;
   }
   return route;
+}
+
+// Tính điểm chặn đường: CPU có thể gặp holder sau cpuSteps bước là step i trên đường của holder.
+// Trả về {x, y, routeIdx} hoặc null nếu không có điểm chặn khả thi.
+function computeInterceptPoint(cpu, holder) {
+  if (!holder || !holder.has) return null;
+  const holderBase = CFG.PLAYER_BASES[holder.idx];
+  const holderRoute = predictHolderRoute(holder, holderBase);
+  if (!holderRoute.length) return null;
+  // Ước tính tốc độ: holder đi 1 bước/tick (cùng đơn vị với CPU).
+  // Tìm điểm trên route holder mà CPU tới được trước hoặc bằng holder.
+  let best = null;
+  for (let i = 0; i < holderRoute.length; i++) {
+    const rp = holderRoute[i];
+    const cpuDist = pathLenSafe(cpu.x, cpu.y, rp.x, rp.y);
+    const holderSteps = i + 1; // holder phải đi i+1 bước để tới đây
+    // CPU cần tới được rp trước hoặc chỉ trễ 1 bước so với holder
+    if (cpuDist <= holderSteps + 1) {
+      // Ưu tiên điểm gần holder nhất (i nhỏ) để chặn sớm
+      best = { x: rp.x, y: rp.y, routeIdx: i, cpuDist, holderSteps };
+      break;
+    }
+  }
+  return best;
 }
 
 function evaluateTrapCell(cpu, x, y) {
@@ -5475,13 +5543,18 @@ function decideCpuState(cpu) {
     reason = 'ENTRY: vừa thoát tình huống xấu -> RECOVER';
   } else if (bb.enemyHolder && GS.cpuDiff !== 'easy') {
     // Đuổi holder được ưu tiên hơn evadeDanger, trừ khi nguy hiểm cực cao (≥90).
-    // Ngưỡng 90 chỉ đạt khi quái ở sát bên – CPU vẫn đuổi trong điều kiện nguy hiểm bình thường.
-    if (utility.evadeDanger < 90) {
-      forced = CPU_STATES.CHASE_HOLDER;
-      reason = `ENTRY: enemy P${bb.enemyHolder.idx+1} cầm kho báu -> CHASE_HOLDER`;
-    } else {
+    // Ngoại lệ: nếu CPU đang ở vị trí choke chặn đường holder về base và AMBUSH score rất cao,
+    // cho phép giữ vị trí (AMBUSH) thay vì chạy đuổi.
+    if (utility.evadeDanger >= 90) {
       forced = CPU_STATES.EVADE_DANGER;
       reason = `ENTRY: nguy hiểm cực cao khi đuổi holder -> EVADE_DANGER`;
+    } else if (GS.cpuDiff === 'hard' && utility.ambush >= 75 && isCellChokePoint(cpu.x, cpu.y)) {
+      // CPU đang ở choke chặn đường → giữ AMBUSH thay vì nhảy sang CHASE_HOLDER
+      forced = CPU_STATES.AMBUSH;
+      reason = `ENTRY: CPU tại choke chặn holder -> AMBUSH (score=${utility.ambush.toFixed(1)})`;
+    } else {
+      forced = CPU_STATES.CHASE_HOLDER;
+      reason = `ENTRY: enemy P${bb.enemyHolder.idx+1} cầm kho báu -> CHASE_HOLDER`;
     }
   } else if (utility.evadeDanger >= 78) {
     forced = CPU_STATES.EVADE_DANGER;
@@ -5554,6 +5627,22 @@ function selectCpuTarget(cpu, state) {
   switch (state) {
     case CPU_STATES.RETURN_BASE:
       target = { x: base.x, y: base.y };
+      // Cải thiện: khi đang về base, nếu năng lượng thấp và Zone Control nằm gần đường về,
+      // ghé qua zone để regen năng lượng (đánh đổi chút thời gian lấy energy buff × 2).
+      if (GS.cpuDiff !== 'easy' && GS.zone && cpu.has) {
+        const cpuEnergy = cpu.energy ?? CFG.ENERGY_MAX;
+        const lowEnergy = cpuEnergy < CFG.ENERGY_MAX * 0.4;
+        if (lowEnergy && GS.zone.capturedBy !== cpu.idx) {
+          const distToBase = pathLenSafe(cpu.x, cpu.y, base.x, base.y);
+          const distToZone = pathLenSafe(cpu.x, cpu.y, CFG.ZONE_CENTER_X, CFG.ZONE_CENTER_Y);
+          const distZoneToBase = pathLenSafe(CFG.ZONE_CENTER_X, CFG.ZONE_CENTER_Y, base.x, base.y);
+          // Detour hợp lý nếu đường vòng qua zone ngắn hơn 40% so với đường thẳng về base.
+          if (distToZone + distZoneToBase <= distToBase * 1.4) {
+            target = { x: CFG.ZONE_CENTER_X, y: CFG.ZONE_CENTER_Y };
+            GS.cpuDebug.reason = (GS.cpuDebug.reason || '') + ` | return-via-zone(e=${Math.round(cpuEnergy)})`;
+          }
+        }
+      }
       break;
     case CPU_STATES.SEEK_TREASURE:
       target = GS.treasureHolder === -1
@@ -5561,18 +5650,33 @@ function selectCpuTarget(cpu, state) {
         : (bb.enemyHolder ? { x: bb.enemyHolder.x, y: bb.enemyHolder.y } : (bb.bestOpportunity ? { x: bb.bestOpportunity.x, y: bb.bestOpportunity.y } : bb.treasure));
       break;
     case CPU_STATES.CHASE_HOLDER:
-      target = bb.enemyHolder ? { x: bb.enemyHolder.x, y: bb.enemyHolder.y } : bb.treasure;
+      if (bb.enemyHolder) {
+        // Chế độ normal/hard: thử tính điểm chặn đường thay vì đuổi theo vị trí hiện tại.
+        if (GS.cpuDiff !== 'easy') {
+          const intercept = computeInterceptPoint(cpu, bb.enemyHolder);
+          if (intercept && intercept.routeIdx >= 1) {
+            target = { x: intercept.x, y: intercept.y };
+            GS.cpuDebug.reason = (GS.cpuDebug.reason || '') + ` | intercept(i=${intercept.routeIdx},cpuD=${intercept.cpuDist})`;
+          } else {
+            target = { x: bb.enemyHolder.x, y: bb.enemyHolder.y };
+          }
+        } else {
+          target = { x: bb.enemyHolder.x, y: bb.enemyHolder.y };
+        }
+      } else {
+        target = bb.treasure;
+      }
       break;
     case CPU_STATES.AMBUSH:
       target = bb.bestAmbush ? { x: bb.bestAmbush.x, y: bb.bestAmbush.y } : (bb.enemyHolder ? { x: bb.enemyHolder.x, y: bb.enemyHolder.y } : bb.treasure);
       GS.cpuDebug.chokeTarget = bb.bestAmbush || null;
       break;
     case CPU_STATES.EVADE_DANGER:
-      target = chooseSafestNearbyCellAvoidChoke(cpu, 4) || chooseSafestNearbyCell(cpu, 4) || { x: base.x, y: base.y };
+      target = chooseEvadeTarget(cpu, 5) || chooseSafestNearbyCellAvoidChoke(cpu, 4) || chooseSafestNearbyCell(cpu, 4) || { x: base.x, y: base.y };
       GS.cpuDebug.chokeTarget = null;
       break;
     case CPU_STATES.RECOVER:
-      target = chooseSafestNearbyCellAvoidChoke(cpu, 5) || chooseSafestNearbyCell(cpu, 5) || { x: base.x, y: base.y };
+      target = chooseEvadeTarget(cpu, 6) || chooseSafestNearbyCellAvoidChoke(cpu, 5) || chooseSafestNearbyCell(cpu, 5) || { x: base.x, y: base.y };
       GS.cpuDebug.chokeTarget = null;
       break;
     case CPU_STATES.SET_TRAP:
@@ -5611,7 +5715,7 @@ function selectCpuTarget(cpu, state) {
     ai.targetLock = {
       state,
       target: { x: target.x, y: target.y },
-      until: now + (GS.cpuDiff === 'hard' ? 1100 : 800),
+      until: now + (GS.cpuDiff === 'hard' ? 700 : 400),
     };
   }
   GS.cpuDebug.target = target;
@@ -5619,8 +5723,20 @@ function selectCpuTarget(cpu, state) {
 }
 
 function pickPrimaryEnemy(cpu) {
+  // Ưu tiên bất kỳ người chơi nào (kể cả bot khác) đang cầm kho báu.
+  const holderEnemy = GS.treasureHolder >= 0 && GS.treasureHolder !== cpu.idx
+    ? GS.players[GS.treasureHolder] : null;
+  if (holderEnemy && holderEnemy.alive !== false) return holderEnemy;
+
+  // Fallback: chọn người chơi không phải bot, gần nhất.
   const enemies = GS.players.filter(p => p.idx !== cpu.idx && !p.isBot && p.alive !== false);
-  if (!enemies.length) return null;
+  if (!enemies.length) {
+    // Nếu toàn bot, chọn bot khác gần nhất.
+    const bots = GS.players.filter(p => p.idx !== cpu.idx && p.alive !== false);
+    if (!bots.length) return null;
+    bots.sort((a,b)=> (Math.abs(a.x-cpu.x)+Math.abs(a.y-cpu.y)) - (Math.abs(b.x-cpu.x)+Math.abs(b.y-cpu.y)));
+    return bots[0];
+  }
   enemies.sort((a,b)=> (Math.abs(a.x-cpu.x)+Math.abs(a.y-cpu.y)) - (Math.abs(b.x-cpu.x)+Math.abs(b.y-cpu.y)));
   return enemies[0];
 }
@@ -6268,100 +6384,70 @@ function runTacticalSearch(ctx) {
 
 function tryCpuCombatSkills(cpu, state, target) {
   if (!cpu || GS.cpuDiff === 'easy') return false;
-  const enemy = pickPrimaryEnemy(cpu);
-  if (!enemy) return false;
   const now = Date.now();
-  const distEnemy = manhattan(cpu, enemy);
 
-  // Ưu tiên ngắt channel giao kho báu của đối phương.
-  if (GS.goalChannel?.active && GS.goalChannel.playerIdx === enemy.idx && distEnemy <= 1) {
-    if (tryStartContest(cpu.idx)) {
-      GS.cpuDebug.reason += ' | cpu=contest_interrupt_channel';
-      return true;
+  // Magnet: hút kho báu đang nằm gần (ưu tiên cao – không cần di chuyển thêm)
+  if (canUseMagnet(cpu, now)) {
+    if (GS.treasureHolder === -1 && GS.treasure) {
+      const d = manhattan(cpu, GS.treasure);
+      if (d > 0 && d <= CFG.MAGNET_RANGE) {
+        if (useMagnet(cpu.idx)) {
+          GS.cpuDebug.reason += ' | cpu=magnet(treasure)';
+          return true;
+        }
+      }
     }
   }
 
-  // Shock khi áp sát để mở combo contest/chase.
-  if (canUseShock(cpu, now) && distEnemy <= 1) {
-    if (useShockPulse(cpu.idx)) {
-      GS.cpuDebug.reason += ` | cpu=shock(dist=${distEnemy})`;
-      return true;
-    }
-  }
-
-  // Push để đẩy enemy vào tường hoặc ngắt contest/channel.
-  if (canUsePush(cpu, now) && distEnemy <= 1) {
-    const wallScore = countOpenNeighbors(enemy.x, enemy.y);
-    const isHardMode = GS.cpuDiff === 'hard';
-    // Ưu tiên push khi enemy gần tường (≤2 exits) hoặc chế độ hard
-    if (wallScore <= 2 || isHardMode || (GS.contest?.active && GS.contest.actorIdx === enemy.idx)) {
-      if (usePush(cpu.idx)) {
-        GS.cpuDebug.reason += ` | cpu=push(wallScore=${wallScore})`;
+  // Shield khi đang cầm treasure và có nguy cơ bị cướp hoặc qua choke.
+  if (canUseShield(cpu, now)) {
+    const nearChoke = isCellChokePoint(cpu.x, cpu.y);
+    const enemy = pickPrimaryEnemy(cpu);
+    const distEnemy = enemy ? manhattan(cpu, enemy) : 999;
+    if (cpu.has && (distEnemy <= 2 || nearChoke)) {
+      if (useShield(cpu.idx)) {
+        GS.cpuDebug.reason += ` | cpu=shield(holder)`;
         return true;
       }
     }
   }
 
-  // Shield khi đang cầm treasure và nguy cơ bị cướp hoặc đi qua choke.
-  const nearChoke = isCellChokePoint(cpu.x, cpu.y);
-  if (canUseShield(cpu, now) && (cpu.has && distEnemy <= 2 || (cpu.has && nearChoke))) {
-    if (useShield(cpu.idx)) {
-      GS.cpuDebug.reason += ` | cpu=shield(${cpu.has ? 'holder' : 'safety'})`;
-      return true;
+  // Clean Step: xóa bẫy gần, hoặc bật safe-step khi returning với treasure (hard)
+  if (canUseCleanStep(cpu, now)) {
+    const nearTrap = GS.traps.some(t => t.owner !== cpu.idx && manhattan(cpu, t) <= CFG.CLEANSTEP_RANGE);
+    if (nearTrap) {
+      if (useCleanStep(cpu.idx)) {
+        GS.cpuDebug.reason += ' | cpu=cleanstep(trap)';
+        return true;
+      }
     }
-  }
-
-  // Dash để áp sát mục tiêu tranh chấp hoặc quay về base khi holder.
-  if (canUseDash(cpu, now)) {
-    const dashTarget = cpu.has ? CFG.PLAYER_BASES[cpu.idx] : (enemy.has ? enemy : target);
-    if (dashTarget) {
-      const path = bfs(GS.grid, cpu.x, cpu.y, dashTarget.x, dashTarget.y, CFG.W, CFG.H);
-      if (path && path.length && distEnemy <= (GS.cpuDiff === 'hard' ? 6 : 4)) {
-        const d = path[0];
-        if (useDash(cpu.idx, { dx: d.dx, dy: d.dy })) {
-          GS.cpuDebug.reason += ` | cpu=dash(${cpu.has ? 'escape' : 'engage'})`;
-          return true;
-        }
+    if (GS.cpuDiff === 'hard' && cpu.has && !nearTrap) {
+      if (useCleanStep(cpu.idx)) {
+        GS.cpuDebug.reason += ' | cpu=cleanstep(safestep)';
+        return true;
       }
     }
   }
 
-  // Lasso khi kho báu nằm trong tầm 4 ô (không cần đến gần) hoặc enemy cầm kho báu gần.
-  if (canUseLasso(cpu, now) && GS.cpuDiff !== 'easy') {
-    const lassoDir = cpu.lastMoveDir || { dx: 1, dy: 0 };
-    // Ưu tiên quăng về phía kho báu nếu ở trong tầm thẳng hàng
-    const treasureTarget = !cpu.has && GS.treasureHolder === -1 ? GS.treasure : null;
-    if (treasureTarget) {
-      const ddx = Math.sign(treasureTarget.x - cpu.x);
-      const ddy = Math.sign(treasureTarget.y - cpu.y);
-      // Kiểm tra thẳng hàng (cùng hàng hoặc cùng cột)
-      const aligned = (ddx !== 0 && ddy === 0 && treasureTarget.y === cpu.y)
-                   || (ddy !== 0 && ddx === 0 && treasureTarget.x === cpu.x);
-      const dist = Math.abs(treasureTarget.x - cpu.x) + Math.abs(treasureTarget.y - cpu.y);
-      if (aligned && dist <= CFG.LASSO_DISTANCE) {
-        cpu.lastMoveDir = { dx: ddx, dy: ddy };
-        if (useLasso(cpu.idx)) {
-          GS.cpuDebug.reason += ' | cpu=lasso(treasure)';
-          return true;
-        }
+  // Sprint khi đang đuổi kẻ cầm kho báu hoặc đang mang kho báu về base
+  if (canUseSprint(cpu, now)) {
+    const enemy = pickPrimaryEnemy(cpu);
+    const distEnemy = enemy ? manhattan(cpu, enemy) : 999;
+    const chasing = enemy && !cpu.has && enemy.has && distEnemy <= (GS.cpuDiff === 'hard' ? 8 : 5);
+    if (cpu.has || chasing) {
+      if (useSprint(cpu.idx)) {
+        GS.cpuDebug.reason += ` | cpu=sprint(${cpu.has ? 'return' : 'chase'})`;
+        return true;
       }
     }
-    // Quăng về phía enemy cầm kho báu nếu thẳng hàng
-    if (!cpu.has && GS.treasureHolder >= 0 && GS.treasureHolder !== cpu.idx) {
-      const holder = GS.players[GS.treasureHolder];
-      if (holder) {
-        const ddx = Math.sign(holder.x - cpu.x);
-        const ddy = Math.sign(holder.y - cpu.y);
-        const aligned = (ddx !== 0 && ddy === 0 && holder.y === cpu.y)
-                     || (ddy !== 0 && ddx === 0 && holder.x === cpu.x);
-        const dist = Math.abs(holder.x - cpu.x) + Math.abs(holder.y - cpu.y);
-        if (aligned && dist <= CFG.LASSO_DISTANCE && !hasShield(holder, now)) {
-          cpu.lastMoveDir = { dx: ddx, dy: ddy };
-          if (useLasso(cpu.idx)) {
-            GS.cpuDebug.reason += ' | cpu=lasso(steal)';
-            return true;
-          }
-        }
+  }
+
+  // Radar khi đang tìm kho báu chưa biết vị trí (treasure còn xa)
+  if (canUseRadar(cpu, now) && !cpu.has && GS.treasureHolder === -1 && GS.treasure) {
+    if (manhattan(cpu, GS.treasure) > 5) {
+      if (useRadar(cpu.idx)) {
+        GS.cpuDebug.reason += ' | cpu=radar(seek)';
+        return true;
       }
     }
   }
@@ -6619,6 +6705,10 @@ function cpuTick() {
   if(!cpu || Date.now() < cpu.cpuThinkingUntil) return;
   if (isStunned(cpu)) return;
 
+  // Khi goal channel đang chạy cho CPU (CPU đang đứng ở base channel kho báu),
+  // KHÔNG di chuyển – tránh rời base và hủy channel.
+  if (GS.goalChannel?.active && GS.goalChannel.playerIdx === cpu.idx) return;
+
   const beforeX = cpu.x, beforeY = cpu.y;
 
   updateCpuBlackboard(cpu);
@@ -6755,6 +6845,7 @@ function handleQuizResult(pidx, correct) {
 const cvs = document.getElementById('cvs');
 const ctx = cvs.getContext('2d');
 let rafId=null, lastRaf=0, fps=0, fpsCounter=0, fpsTime=0;
+let _lastHudUpdate=0, _lastScoreStr='';
 
 function resizeCanvas() {
   const wrap = document.getElementById('canvas-wrap');
@@ -6804,7 +6895,12 @@ function renderLoop(ts) {
   // Vẽ
   drawFrame();
   updateDebugPanel();
-  updateHUD();
+  // Throttle HUD updates: ~12fps trên touch, ~30fps trên desktop
+  const hudInterval = LOW_POWER_MODE ? 83 : 33;
+  if (ts - _lastHudUpdate >= hudInterval) {
+    updateHUD();
+    _lastHudUpdate = ts;
+  }
 }
 
 /* ================================================================
@@ -6813,73 +6909,56 @@ function renderLoop(ts) {
    ================================================================ */
 function spawnVfx(type, x, y, opts) {
   if (!GS.vfx) GS.vfx = [];
+  // Giới hạn VFX: ít hơn trên mobile để giảm render cost
+  const MAX_VFX = LOW_POWER_MODE ? 18 : 60;
+  if (GS.vfx.length >= MAX_VFX) GS.vfx.shift();
   GS.vfx.push({ type, x, y, spawnAt: Date.now(), ...opts });
 }
 
 // ── Dash: trail dots theo đường đi + ring xuất phát ──
-function vfxDash(p, dir, moved) {
-  const T = CFG.TILE;
-  const ox = (p.x - dir.dx * moved) * T + T / 2;
-  const oy = (p.y - dir.dy * moved) * T + T / 2;
-  // Whoosh ring at origin
-  spawnVfx('ring', ox, oy, { color: '#70c8ff', r0: T * 0.2, r1: T * 2.2, life: 340, alpha: 0.85, lineW: 2.5 });
-  // Speed lines
-  for (let i = 0; i <= moved; i++) {
-    const tx = (p.x - dir.dx * (moved - i)) * T + T / 2;
-    const ty = (p.y - dir.dy * (moved - i)) * T + T / 2;
-    spawnVfx('trail', tx, ty, { color: '#90d8ff', r: T * 0.38, life: 280 + i * 60, delay: i * 18, alpha: 0.8 });
-  }
-  // Velocity sparks flying backward from destination
-  for (let s = 0; s < 6; s++) {
-    const ang = Math.atan2(-dir.dy, -dir.dx) + (Math.random() - 0.5) * 1.4;
-    spawnVfx('spark', p.x * T + T / 2, p.y * T + T / 2, {
-      color: s % 2 === 0 ? '#c0eeff' : '#3fb0ff',
-      vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.2 + Math.random()),
-      life: 260 + Math.random() * 80,
-    });
-  }
-  // Label
-  spawnVfx('label', p.x * T + T / 2, p.y * T - 2, { text: '⚡ DASH', color: '#90d8ff', size: 8, life: 600 });
-}
-
-// ── Shock: expanding ring + 8 sparks + stun flash per victim ──
-function vfxShock(p, victims) {
+// ── Sprint: vòng ánh sáng xanh + tia tốc độ tỏa ra ──
+function vfxSprint(p) {
   const T = CFG.TILE;
   const cx = p.x * T + T / 2, cy = p.y * T + T / 2;
-  // Big shock ring
-  spawnVfx('ring', cx, cy, { color: '#ffe040', r0: T * 0.3, r1: T * (CFG.SHOCK_RANGE_MANHATTAN + 1.3), life: 420, alpha: 1, lineW: 3 });
-  spawnVfx('ring', cx, cy, { color: '#fff8a0', r0: T * 0.1, r1: T * (CFG.SHOCK_RANGE_MANHATTAN + 0.6), life: 280, alpha: 0.5, lineW: 1.5 });
-  // Fill flash
-  spawnVfx('fill-ring', cx, cy, { color: '#ffe040', r0: 0, r1: T * (CFG.SHOCK_RANGE_MANHATTAN + 1), life: 200, alpha: 0.25 });
-  // Radial sparks
-  for (let s = 0; s < 10; s++) {
-    const ang = (s / 10) * Math.PI * 2;
+  spawnVfx('ring', cx, cy, { color: '#80ff60', r0: T * 0.3, r1: T * 1.6, life: 400, alpha: 0.9, lineW: 2.5 });
+  spawnVfx('ring', cx, cy, { color: '#c0ffb0', r0: T * 0.1, r1: T * 2.0, life: 280, alpha: 0.5, lineW: 1.5 });
+  spawnVfx('fill-ring', cx, cy, { color: '#60ff40', r0: 0, r1: T * 1.2, life: 260, alpha: 0.18 });
+  for (let s = 0; s < 8; s++) {
+    const ang = (s / 8) * Math.PI * 2;
     spawnVfx('spark', cx, cy, {
-      color: s % 3 === 0 ? '#fff9c0' : '#ffd040',
-      vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.8 + Math.random() * 1.2),
-      life: 380 + Math.random() * 100,
+      color: s % 2 === 0 ? '#c0ffb0' : '#60ff40',
+      vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.3 + Math.random() * 0.6),
+      life: 350 + Math.random() * 100,
     });
   }
-  // Stun flash on each victim
-  for (const vi of victims) {
-    const e = GS.players[vi];
-    if (!e) continue;
-    const ex = e.x * T + T / 2, ey = e.y * T + T / 2;
-    spawnVfx('ring', ex, ey, { color: '#ffee60', r0: T * 0.5, r1: T * 1.4, life: 320, alpha: 0.9, lineW: 2 });
-    spawnVfx('label', ex, ey - T * 0.4, { text: '✶ STUN', color: '#ffe040', size: 8, life: 700 });
+  spawnVfx('label', cx, cy - T * 1.1, { text: '🏃 SPRINT', color: '#80ff60', size: 9, life: 700 });
+}
+
+// ── Radar: vòng quét + hiệu ứng xung ──
+function vfxRadar(p) {
+  const T = CFG.TILE;
+  const cx = p.x * T + T / 2, cy = p.y * T + T / 2;
+  spawnVfx('ring', cx, cy, { color: '#40ffcc', r0: T * 0.2, r1: T * 3.0, life: 500, alpha: 0.8, lineW: 2 });
+  spawnVfx('ring', cx, cy, { color: '#80ffe0', r0: T * 0.1, r1: T * 2.0, life: 350, alpha: 0.5, lineW: 1.5 });
+  spawnVfx('fill-ring', cx, cy, { color: '#20f0a0', r0: 0, r1: T * 2.5, life: 300, alpha: 0.10 });
+  for (let s = 0; s < 6; s++) {
+    const ang = (s / 6) * Math.PI * 2;
+    spawnVfx('spark', cx, cy, {
+      color: '#40ffcc',
+      vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (0.8 + Math.random() * 0.6),
+      life: 300 + Math.random() * 80,
+    });
   }
-  spawnVfx('label', cx, cy - T * 1.2, { text: '⚡ SHOCK', color: '#ffe878', size: 9, life: 650 });
+  spawnVfx('label', cx, cy - T * 1.1, { text: '📡 RADAR', color: '#40ffcc', size: 9, life: 650 });
 }
 
 // ── Shield: cyan hex ring + shimmer burst ──
 function vfxShield(p) {
   const T = CFG.TILE;
   const cx = p.x * T + T / 2, cy = p.y * T + T / 2;
-  // Hex-like ring (6-sided approx via arc + slight edges)
   spawnVfx('ring', cx, cy, { color: '#70e8ff', r0: T * 0.6, r1: T * 1.3, life: 480, alpha: 1, lineW: 3 });
   spawnVfx('ring', cx, cy, { color: '#b0f4ff', r0: T * 0.4, r1: T * 1.0, life: 300, alpha: 0.6, lineW: 1.5 });
   spawnVfx('fill-ring', cx, cy, { color: '#40c8ff', r0: 0, r1: T * 1.1, life: 260, alpha: 0.22 });
-  // Shimmer sparks rotating around player
   for (let s = 0; s < 8; s++) {
     const ang = (s / 8) * Math.PI * 2 + Math.random() * 0.5;
     spawnVfx('spark', cx, cy, {
@@ -6891,77 +6970,66 @@ function vfxShield(p) {
   spawnVfx('label', cx, cy - T * 1.1, { text: '🛡 SHIELD', color: '#80ecff', size: 8, life: 650 });
 }
 
-// ── Push: orange shockwave + directional chevron arrows ──
-function vfxPush(p, victims) {
+// ── Clean Step: xóa bẫy = burst vàng tại bẫy; safe step = vòng xanh lá tại người ──
+function vfxCleanStep(p, tx, ty, removedTrap) {
   const T = CFG.TILE;
   const cx = p.x * T + T / 2, cy = p.y * T + T / 2;
-  // Origin burst
-  spawnVfx('ring', cx, cy, { color: '#ff8030', r0: T * 0.3, r1: T * 2.0, life: 360, alpha: 0.9, lineW: 3 });
-  spawnVfx('fill-ring', cx, cy, { color: '#ff6010', r0: 0, r1: T * 1.2, life: 200, alpha: 0.2 });
-  // Orange sparks flying outward
-  for (let s = 0; s < 8; s++) {
-    const ang = (s / 8) * Math.PI * 2;
-    spawnVfx('spark', cx, cy, {
-      color: s % 2 === 0 ? '#ffb060' : '#ff5010',
-      vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.4 + Math.random()),
-      life: 300 + Math.random() * 80,
-    });
-  }
-  // Per-victim: chevron in push direction + impact ring
-  for (const vi of victims) {
-    const e = GS.players[vi];
-    if (!e) continue;
-    const fx = Math.sign(e.x - p.x) || 0;
-    const fy = fx !== 0 ? 0 : Math.sign(e.y - p.y) || 1;
-    const ex = e.x * T + T / 2, ey = e.y * T + T / 2;
-    spawnVfx('chevron', cx, cy, { color: '#ff9040', dx: fx, dy: fy, life: 400, size: T });
-    spawnVfx('ring', ex, ey, { color: '#ffaa50', r0: T * 0.3, r1: T * 1.5, life: 340, alpha: 0.8, lineW: 2 });
-    if (e.stunnedUntil > Date.now()) {
-      spawnVfx('label', ex, ey - T * 0.5, { text: '💥 WALL!', color: '#ffaa40', size: 9, life: 750 });
-    }
-  }
-  spawnVfx('label', cx, cy - T * 1.2, { text: '💥 PUSH', color: '#ffb060', size: 9, life: 650 });
-}
-
-// ── Lasso: rope line + impact flash + result label ──
-function vfxLasso(p, hitX, hitY, result) {
-  const T = CFG.TILE;
-  const sx = p.x * T + T / 2, sy = p.y * T + T / 2;
-  const ex = hitX * T + T / 2, ey = hitY * T + T / 2;
-  // Animated rope
-  spawnVfx('rope', sx, sy, { color: '#c8902a', ex, ey, life: 450, lineW: 2.5 });
-  // Impact effect at tip
-  const col = result === 'treasure' ? '#ffe080'
-            : result === 'steal'    ? '#ff9040'
-            : result === 'pull'     ? '#70c8ff'
-            : result === 'blocked'  ? '#aaaaaa'
-            : '#666666';
-  spawnVfx('ring', ex, ey, { color: col, r0: T * 0.15, r1: T * 1.5, life: 380, alpha: 0.85, lineW: 2.5 });
-  if (result === 'treasure' || result === 'steal') {
-    spawnVfx('fill-ring', ex, ey, { color: col, r0: 0, r1: T * 1.1, life: 280, alpha: 0.22 });
-    for (let s = 0; s < 8; s++) {
-      const ang = (s / 8) * Math.PI * 2;
-      spawnVfx('spark', ex, ey, {
-        color: s % 2 === 0 ? '#ffe070' : '#ffb030',
-        vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.3 + Math.random() * 0.4), life: 360,
+  if (removedTrap) {
+    const rx = tx * T + T / 2, ry = ty * T + T / 2;
+    spawnVfx('ring', rx, ry, { color: '#ffdd50', r0: T * 0.2, r1: T * 1.5, life: 380, alpha: 0.9, lineW: 2.5 });
+    spawnVfx('fill-ring', rx, ry, { color: '#ffcc30', r0: 0, r1: T * 1.0, life: 220, alpha: 0.28 });
+    for (let s = 0; s < 6; s++) {
+      const ang = (s / 6) * Math.PI * 2;
+      spawnVfx('spark', rx, ry, {
+        color: s % 2 === 0 ? '#fff080' : '#ffcc40',
+        vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.0 + Math.random() * 0.5), life: 320,
       });
     }
-    spawnVfx('label', ex, ey - T * 0.9,
-      { text: result === 'steal' ? '🪢 STOLEN!' : '🪢 GET!', color: '#ffe080', size: 10, life: 800 });
-  } else if (result === 'pull') {
-    spawnVfx('label', ex, ey - T * 0.9, { text: '🪢 PULL!', color: '#70c8ff', size: 9, life: 650 });
-  } else if (result === 'blocked') {
-    spawnVfx('label', ex, ey - T * 0.9, { text: '🛡 BLOCKED', color: '#aaaaaa', size: 8, life: 600 });
+    spawnVfx('label', rx, ry - T * 0.9, { text: '🧹 BẪY ĐÃ XÓA!', color: '#ffdd50', size: 9, life: 800 });
   } else {
-    spawnVfx('label', sx, sy - T * 0.9, { text: '🪢 MISS', color: '#666', size: 8, life: 500 });
+    spawnVfx('ring', cx, cy, { color: '#b0ffb0', r0: T * 0.4, r1: T * 1.3, life: 420, alpha: 0.9, lineW: 2.5 });
+    spawnVfx('fill-ring', cx, cy, { color: '#80ff80', r0: 0, r1: T * 1.0, life: 280, alpha: 0.20 });
+    for (let s = 0; s < 6; s++) {
+      const ang = (s / 6) * Math.PI * 2;
+      spawnVfx('spark', cx, cy, {
+        color: s % 2 === 0 ? '#d0ffd0' : '#80ff80',
+        vx: Math.cos(ang), vy: Math.sin(ang), dist: T * (1.0 + Math.random() * 0.4), life: 300,
+      });
+    }
+    spawnVfx('label', cx, cy - T * 1.1, { text: '🧹 SAFE STEP', color: '#b0ffb0', size: 9, life: 700 });
   }
-  spawnVfx('label', sx, sy - T * 1.5, { text: '🪢 LASSO', color: '#c8902a', size: 8, life: 600 });
+}
+
+// ── Magnet: vòng kéo thu + đường kéo về người ──
+function vfxMagnet(p, tx, ty, hit) {
+  const T = CFG.TILE;
+  const cx = p.x * T + T / 2, cy = p.y * T + T / 2;
+  if (hit) {
+    const ex = tx * T + T / 2, ey = ty * T + T / 2;
+    spawnVfx('rope', cx, cy, { color: '#ff70ff', ex, ey, life: 350, lineW: 2 });
+    spawnVfx('ring', cx, cy, { color: '#ff80ff', r0: T * 1.8, r1: T * 0.3, life: 380, alpha: 0.85, lineW: 2.5 });
+    spawnVfx('ring', cx, cy, { color: '#ffb0ff', r0: T * 2.5, r1: T * 0.5, life: 300, alpha: 0.5, lineW: 1.5 });
+    for (let s = 0; s < 8; s++) {
+      const ang = (s / 8) * Math.PI * 2;
+      spawnVfx('spark', cx, cy, {
+        color: s % 2 === 0 ? '#ffccff' : '#ff60ff',
+        vx: -Math.cos(ang), vy: -Math.sin(ang), dist: T * (0.3 + Math.random() * 0.8),
+        life: 280 + Math.random() * 80,
+      });
+    }
+    spawnVfx('label', cx, cy - T * 1.2, { text: '🧲 HÚT!', color: '#ff80ff', size: 10, life: 800 });
+  } else {
+    spawnVfx('ring', cx, cy, { color: '#cc80cc', r0: T * 1.2, r1: T * 0.4, life: 300, alpha: 0.6, lineW: 1.5 });
+    spawnVfx('label', cx, cy - T * 0.9, { text: '🧲 MISS', color: '#cc80cc', size: 8, life: 500 });
+  }
 }
 
 // ── Draw all active VFX ──
 function drawVfx(T) {
   if (!GS.vfx || !GS.vfx.length) return;
   const now = Date.now();
+  // Mobile: bỏ qua shadowBlur để tiết kiệm GPU (1 trong các phép tính tốn nhất trên canvas 2D)
+  const SBLUR = LOW_POWER_MODE ? 0 : 1;
   ctx.save();
   GS.vfx = GS.vfx.filter(v => {
     const age = now - v.spawnAt;
@@ -6979,7 +7047,7 @@ function drawVfx(T) {
         ctx.globalAlpha = eOut * (v.alpha || 1);
         ctx.strokeStyle = v.color;
         ctx.lineWidth = (v.lineW || 2) * Math.max(0.3, eOut);
-        ctx.shadowColor = v.color; ctx.shadowBlur = 6;
+        ctx.shadowColor = v.color; ctx.shadowBlur = SBLUR * 6;
         ctx.beginPath();
         ctx.arc(v.x, v.y, Math.max(0.5, r), 0, Math.PI * 2);
         ctx.stroke();
@@ -6998,7 +7066,7 @@ function drawVfx(T) {
       case 'trail': {
         ctx.globalAlpha = eOut2 * (v.alpha || 1);
         ctx.fillStyle = v.color;
-        ctx.shadowColor = v.color; ctx.shadowBlur = 5;
+        ctx.shadowColor = v.color; ctx.shadowBlur = SBLUR * 5;
         ctx.beginPath();
         ctx.arc(v.x, v.y, Math.max(0.5, v.r * eOut), 0, Math.PI * 2);
         ctx.fill();
@@ -7014,7 +7082,7 @@ function drawVfx(T) {
         ctx.globalAlpha = eOut;
         ctx.strokeStyle = v.color;
         ctx.lineWidth = 1.8;
-        ctx.shadowColor = v.color; ctx.shadowBlur = 4;
+        ctx.shadowColor = v.color; ctx.shadowBlur = SBLUR * 4;
         ctx.beginPath();
         ctx.moveTo(tailX, tailY);
         ctx.lineTo(px2, py2);
@@ -7042,7 +7110,7 @@ function drawVfx(T) {
           const px = -v.dy, py = v.dx; // perpendicular
           ctx.strokeStyle = v.color;
           ctx.lineWidth = 2.5 - ci * 0.6;
-          ctx.shadowColor = v.color; ctx.shadowBlur = 5;
+          ctx.shadowColor = v.color; ctx.shadowBlur = SBLUR * 5;
           ctx.beginPath();
           ctx.moveTo(ox + px * sz * 0.4 - v.dx * sz * 0.3, oy + py * sz * 0.4 - v.dy * sz * 0.3);
           ctx.lineTo(ox + v.dx * sz * 0.3, oy + v.dy * sz * 0.3);
@@ -7058,7 +7126,7 @@ function drawVfx(T) {
         ctx.fillStyle = v.color;
         ctx.font = `bold ${v.size || 9}px sans-serif`;
         ctx.textAlign = 'center';
-        ctx.shadowColor = v.color; ctx.shadowBlur = 10;
+        ctx.shadowColor = v.color; ctx.shadowBlur = SBLUR * 10;
         ctx.fillText(v.text, v.x, v.y - t * 18);
         ctx.shadowBlur = 0;
         break;
@@ -7072,7 +7140,7 @@ function drawVfx(T) {
         ctx.strokeStyle = v.color;
         ctx.lineWidth = v.lineW || 2.5;
         ctx.setLineDash([7, 4]);
-        ctx.shadowColor = v.color; ctx.shadowBlur = 6;
+        ctx.shadowColor = v.color; ctx.shadowBlur = SBLUR * 6;
         ctx.beginPath();
         ctx.moveTo(v.x, v.y);
         ctx.lineTo(rx, ry);
@@ -7082,7 +7150,7 @@ function drawVfx(T) {
         // Hook tip dot
         ctx.globalAlpha = eOut2 * 0.95;
         ctx.fillStyle = '#fff';
-        ctx.shadowColor = v.color; ctx.shadowBlur = 5;
+        ctx.shadowColor = v.color; ctx.shadowBlur = SBLUR * 5;
         ctx.beginPath();
         ctx.arc(rx, ry, 3.5, 0, Math.PI * 2);
         ctx.fill();
@@ -7413,6 +7481,47 @@ function drawFrame() {
     ctx.fillStyle = eP > 0.5 ? '#3fb0ff' : (eP > 0.25 ? '#f7aa00' : '#ff4444');
     ctx.fillRect(ebX, ebY, (T-2)*eP, 2);
   }
+
+  // ── Radar arrows: draw direction arrow for each player with active radar ──
+  const radarNow = Date.now();
+  for (const p of GS.players) {
+    if (!p || (p.radarUntil || 0) <= radarNow) continue;
+    // Find target: treasure holder (not self), else ground treasure
+    let target = null;
+    if (GS.treasureHolder >= 0 && GS.treasureHolder !== p.idx) {
+      target = GS.players[GS.treasureHolder];
+    } else if (GS.treasureHolder === -1 && GS.treasure) {
+      target = GS.treasure;
+    }
+    if (!target) continue;
+    const prx = lerp(p.px, p.x, p.lerpT) * T + T / 2;
+    const pry = lerp(p.py, p.y, p.lerpT) * T + T / 2;
+    const trx = target.x * T + T / 2;
+    const try_ = target.y * T + T / 2;
+    const ddx = trx - prx, ddy = try_ - pry;
+    const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+    if (dist < 1) continue;
+    const ndx = ddx / dist, ndy = ddy / dist;
+    const arrowStart = T * 0.85, arrowLen = T * 0.65, headSize = T * 0.22;
+    const ax = prx + ndx * arrowStart, ay = pry + ndy * arrowStart;
+    const bx = ax + ndx * arrowLen, by = ay + ndy * arrowLen;
+    const perpX = -ndy, perpY = ndx;
+    const pulse = 0.7 + 0.3 * Math.sin(radarNow / 200);
+    ctx.save();
+    ctx.globalAlpha = 0.9 * pulse;
+    ctx.strokeStyle = '#40ffcc';
+    ctx.fillStyle = '#40ffcc';
+    ctx.shadowColor = '#40ffcc'; ctx.shadowBlur = 10;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - ndx * headSize + perpX * headSize * 0.6, by - ndy * headSize + perpY * headSize * 0.6);
+    ctx.lineTo(bx - ndx * headSize - perpX * headSize * 0.6, by - ndy * headSize - perpY * headSize * 0.6);
+    ctx.closePath(); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
 }
 
 /* ================================================================
@@ -7444,21 +7553,34 @@ function updateHUD() {
       const cdReady = leftMs <= 0;
       const enOk = en >= energyCost;
       const ready = cdReady && enOk;
-      elx.classList.toggle('ready', ready);
-      elx.classList.toggle('cd', !ready);
       const cdStr = cdReady ? (enOk ? 'Ready' : `⚡${Math.round(en)}/${energyCost}`) : `${(leftMs/1000).toFixed(1)}s`;
-      elx.innerHTML = `${name}<br><b>${cdStr}</b>`;
+      const key = elx.dataset.key || '';
+      const kb = key ? `<span class="key-badge">${key}</span>` : '';
+      const html = `${kb}${name}<br><b>${cdStr}</b>`;
+      // Chỉ write innerHTML khi nội dung thực sự thay đổi (tránh thrash DOM)
+      if (elx._cachedHtml !== html) {
+        elx.innerHTML = html;
+        elx._cachedHtml = html;
+      }
+      if (elx._cachedReady !== ready) {
+        elx.classList.toggle('ready', ready);
+        elx.classList.toggle('cd', !ready);
+        elx._cachedReady = ready;
+      }
     };
-    syncSkill(skillEls.dash, 'Dash', dashLeft, CFG.DASH_ENERGY);
-    syncSkill(skillEls.shock, 'Shock', shockLeft, CFG.SHOCK_ENERGY);
-    syncSkill(skillEls.shield, 'Shield', shieldLeft, CFG.SHIELD_ENERGY);
-    syncSkill(skillEls.push, 'Push', pushLeft, CFG.PUSH_ENERGY);
-    syncSkill(skillEls.lasso, 'Lasso', lassoLeft, CFG.LASSO_ENERGY);
+    syncSkill(skillEls.dash,   '🏃 Sprint',  dashLeft,  CFG.SPRINT_ENERGY);
+    syncSkill(skillEls.shock,  '📡 Radar',   shockLeft, CFG.RADAR_ENERGY);
+    syncSkill(skillEls.shield, '🛡 Shield',  shieldLeft, CFG.SHIELD_ENERGY);
+    syncSkill(skillEls.push,   '🧹 Clean',   pushLeft,  CFG.CLEANSTEP_ENERGY);
+    syncSkill(skillEls.lasso,  '🧲 Magnet',  lassoLeft, CFG.MAGNET_ENERGY);
 
     const states = [];
     if (isStunned(me, now)) states.push('STUN');
     if (hasShield(me, now)) states.push('SHIELD');
     if (isSlowed(me, now)) states.push('SLOW');
+    if ((me.sprintUntil || 0) > now) states.push('SPRINT');
+    if ((me.radarUntil || 0) > now) states.push('RADAR');
+    if ((me.safeStepUntil || 0) > now) states.push('SAFE');
     if (!states.length) states.push('NORMAL');
     const se = document.getElementById('hud-states');
     if (se) se.textContent = `State: ${states.join(' | ')}`;
@@ -7515,6 +7637,9 @@ function updateHUD() {
 function updateScoreBox() {
   const box=document.getElementById('score-box');
   if(!box) return;
+  const newStr = GS.players.map(p=>`${p.name}:${p.score}`).join('|');
+  if (newStr === _lastScoreStr) return; // không thay đổi, skip DOM
+  _lastScoreStr = newStr;
   box.innerHTML='';
   for(const p of GS.players){
     const d=document.createElement('div');
@@ -7564,9 +7689,10 @@ window.addEventListener('keyup', e=>{ keys[e.key]=false; });
 
 // Touch controls
 const touchState={};
-function touchDir(dir) {
-  touchState[dir]=true;
-  if(!GS.running) return;
+const _touchHoldTimers={};
+
+function _doTouchMove(dir) {
+  if (!GS.running) return;
   switch(dir){
     case 'up':    tryMove(GS.myIdx,0,-1); break;
     case 'down':  tryMove(GS.myIdx,0,1); break;
@@ -7574,26 +7700,44 @@ function touchDir(dir) {
     case 'right': tryMove(GS.myIdx,1,0); break;
   }
 }
-function touchRelease(dir) { delete touchState[dir]; }
 
-function touchAction(action) {
+function touchDir(dir, evt) {
+  if (evt) evt.preventDefault(); // ngăn ghost mousedown sau touchstart
+  // Nếu là touch device thì bỏ qua sự kiện mouse để tránh double trigger
+  if (evt && evt.type === 'mousedown' && IS_TOUCH_DEVICE) return;
+  if (touchState[dir]) return; // đã giữ, không cần xử lý lại
+  touchState[dir] = true;
+  _doTouchMove(dir);
+  // Hold to repeat: di chuyển liên tục khi giữ nút
+  clearInterval(_touchHoldTimers[dir]);
+  _touchHoldTimers[dir] = setInterval(() => {
+    if (!touchState[dir]) { clearInterval(_touchHoldTimers[dir]); return; }
+    _doTouchMove(dir);
+  }, CFG.PLAYER_MOVE_BASE_MS + 30);
+}
+
+function touchRelease(dir, evt) {
+  if (evt) evt.preventDefault();
+  clearInterval(_touchHoldTimers[dir]);
+  delete touchState[dir];
+}
+
+function touchAction(action, evt) {
+  if (evt) evt.preventDefault();
+  if (evt && evt.type === 'mousedown' && IS_TOUCH_DEVICE) return;
   if (!GS.running) return;
-  if (action === 'trap') {
-    requestPlaceTrap(GS.myIdx);
-    return;
-  }
-  if (action === 'interact') {
-    requestInteract(GS.myIdx);
-    return;
-  }
+  if (action === 'trap') { requestPlaceTrap(GS.myIdx); return; }
+  if (action === 'interact') { requestInteract(GS.myIdx); return; }
   requestUseSkill(action);
 }
 
 // Hiện touch controls trên mobile
 function checkMobile() {
   const tc=document.getElementById('touch-ctrl');
-  if('ontouchstart' in window || navigator.maxTouchPoints>0){
+  const kb=document.getElementById('hud-keybar');
+  if(IS_TOUCH_DEVICE){
     tc.style.display='flex';
+    if(kb) kb.style.display='none'; // keybar chỉ dùng cho desktop keyboard
   }
 }
 checkMobile();
