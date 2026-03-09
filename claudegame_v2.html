@@ -907,6 +907,10 @@ const CFG = {
     'wss://test.mosquitto.org:8081/mqtt',     // Eclipse Mosquitto test
     'wss://broker.emqx.io:8084/mqtt',         // EMQ X fallback
   ],
+  NET_SNAPSHOT_MIN_INTERVAL_MS: 90,
+  NET_HOST_TICK_SNAPSHOT_MS: 170,
+  NET_MAP_SYNC_REQ_COOLDOWN_MS: 1500,
+  NET_MAX_PENDING_INPUTS: 24,
   LOOP_ADD_RATIO: 0.12,          // tỉ lệ thêm vòng lặp vào maze
   DEAD_END_PASSES: 2,            // số lần giảm ngõ cụt
   CPU_EASY_MS: 900, CPU_NORMAL_MS: 550, CPU_HARD_MS: 280,
@@ -3509,6 +3513,12 @@ const GS = {
   netClientLastSeq: -1,
   netClientLastTs: 0,
   netClientLastEventId: 0,
+  mapVersion: 0,
+  mapHash: '',
+  snapshotVersion: 0,
+  netLastBroadcastAt: 0,
+  netLastTickSnapshotAt: 0,
+  netLastMapSyncReqAt: 0,
   netRoomPhase: 'lobby', // lobby | countdown | in_game
   netMatchId: '',
   netCountdownStartAt: 0,
@@ -3567,6 +3577,7 @@ function makePlayer(idx, name, isBot=false, clientId='') {
     moveNextAt: 0,
     lastMoveDir: { dx: 0, dy: -1 },
     inputSeq: 0,          // cho online reconcile
+    lastAckSeq: 0,
     pendingMoves: [],
   };
 }
@@ -3688,6 +3699,111 @@ function isIncomingSnapshotNewer(tickId, seq, serverTs) {
   if (s > GS.netClientLastSeq) return true;
   if (s < GS.netClientLastSeq) return false;
   return ts > GS.netClientLastTs;
+}
+
+function computeGridHash(grid) {
+  if (!grid || !grid.length) return '';
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < grid.length; i++) {
+    h ^= (grid[i] + i) & 0xff;
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+function refreshMapVersion(reason = 'map_update') {
+  GS.mapVersion = (GS.mapVersion || 0) + 1;
+  GS.mapHash = computeGridHash(GS.grid);
+  netLog('MAP_VERSION_UPDATE', { reason, mapVersion: GS.mapVersion, mapHash: GS.mapHash });
+}
+
+function buildAuthoritativeMapPayload() {
+  return {
+    mapVersion: GS.mapVersion || 0,
+    mapHash: GS.mapHash || computeGridHash(GS.grid),
+    regenVersion: GS.netRegenVersion || 0,
+    seed: GS.seed,
+    round: GS.round,
+    grid: Array.from(GS.grid || []),
+    cspMeta: {
+      rerollCount: GS.cspLayoutMeta?.rerollCount ?? 0,
+      acceptedSeed: GS.cspLayoutMeta?.acceptedSeed ?? GS.seed,
+      mapQualityScore: GS.cspLayoutMeta?.quality?.score ?? 0,
+    },
+    treasure: GS.treasure,
+    treasureHolder: GS.treasureHolder,
+    traps: (GS.traps || []).map(t=>({ owner:t.owner, x:t.x, y:t.y, createdAt:t.createdAt, ttl:t.ttl })),
+    monsters: (GS.monsters || []).map(m=>({ x:m.x, y:m.y })),
+    zone: GS.zone ? {
+      capturedBy: GS.zone.capturedBy,
+      capturingBy: GS.zone.capturingBy,
+      captureStart: GS.zone.captureStart,
+      captureEnd: GS.zone.captureEnd,
+    } : null,
+    contest: GS.contest ? { ...GS.contest } : null,
+    goalChannel: GS.goalChannel ? { ...GS.goalChannel } : null,
+  };
+}
+
+function applyAuthoritativeMapPayload(mapPayload, source = 'sync') {
+  if (!mapPayload || !Array.isArray(mapPayload.grid)) return false;
+  if (mapPayload.grid.length !== CFG.W * CFG.H) return false;
+  GS.seed = Number.isFinite(mapPayload.seed) ? mapPayload.seed : GS.seed;
+  GS.round = Number.isFinite(mapPayload.round) ? mapPayload.round : GS.round;
+  GS.grid = Uint8Array.from(mapPayload.grid);
+  updateChokeCache();
+  GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
+  GS.graphColorMap = GS.gcResult.colorMap;
+  GS.mapVersion = Number.isFinite(mapPayload.mapVersion) ? mapPayload.mapVersion : (GS.mapVersion || 0);
+  GS.mapHash = mapPayload.mapHash || computeGridHash(GS.grid);
+  if (Number.isFinite(mapPayload.regenVersion)) {
+    GS.netLastAppliedRegenVersion = Math.max(GS.netLastAppliedRegenVersion || 0, mapPayload.regenVersion);
+  }
+  GS.treasure = mapPayload.treasure ?? GS.treasure;
+  GS.treasureHolder = Number.isFinite(mapPayload.treasureHolder) ? mapPayload.treasureHolder : GS.treasureHolder;
+  GS.traps = Array.isArray(mapPayload.traps) ? mapPayload.traps.map(t => ({ ...t })) : GS.traps;
+  if (Array.isArray(mapPayload.monsters)) {
+    GS.monsters = mapPayload.monsters.map(m => makeMonster(m.x, m.y));
+  }
+  if (mapPayload.zone && GS.zone) {
+    GS.zone.capturedBy = Number.isFinite(mapPayload.zone.capturedBy) ? mapPayload.zone.capturedBy : GS.zone.capturedBy;
+    GS.zone.capturingBy = Number.isFinite(mapPayload.zone.capturingBy) ? mapPayload.zone.capturingBy : GS.zone.capturingBy;
+    GS.zone.captureStart = Number.isFinite(mapPayload.zone.captureStart) ? mapPayload.zone.captureStart : GS.zone.captureStart;
+    GS.zone.captureEnd = Number.isFinite(mapPayload.zone.captureEnd) ? mapPayload.zone.captureEnd : GS.zone.captureEnd;
+  }
+  GS.contest = mapPayload.contest || null;
+  GS.goalChannel = mapPayload.goalChannel || null;
+  if (mapPayload.cspMeta) {
+    GS.cspLayoutMeta = {
+      ...(GS.cspLayoutMeta || {}),
+      rerollCount: mapPayload.cspMeta.rerollCount ?? 0,
+      acceptedSeed: mapPayload.cspMeta.acceptedSeed ?? GS.seed,
+      quality: { ...(GS.cspLayoutMeta?.quality || {}), score: mapPayload.cspMeta.mapQualityScore ?? 0 },
+    };
+  }
+  buildInfluenceMap();
+  netLog('MAP_APPLIED', {
+    source,
+    mapVersion: GS.mapVersion,
+    mapHash: GS.mapHash,
+    regenVersion: GS.netLastAppliedRegenVersion || 0,
+  });
+  return true;
+}
+
+function requestMapSync(reason = 'mismatch') {
+  if (GS.isHost || GS.mode !== 'online' || !GS.roomCode) return;
+  const now = Date.now();
+  if (now - (GS.netLastMapSyncReqAt || 0) < CFG.NET_MAP_SYNC_REQ_COOLDOWN_MS) return;
+  GS.netLastMapSyncReqAt = now;
+  mqttPublish({
+    type: 'MAP_SYNC_REQUEST',
+    clientId: GS.clientId,
+    reason,
+    mapVersion: GS.mapVersion || 0,
+    mapHash: GS.mapHash || '',
+  }, { qos: 1 });
+  netLog('CLIENT_MAP_SYNC_REQUEST', { reason, mapVersion: GS.mapVersion || 0, mapHash: GS.mapHash || '' });
 }
 
 function updateCspFairnessStats(numPlayers) {
@@ -3898,6 +4014,7 @@ function initRound(seed, playersData, keepScore=false) {
   const layout = generateAcceptedRoundLayout(GS.seed, GS.round, numP, anchors, { rngSalt: 0x1F2E3D, tag: 'init' });
   GS.seed = layout.seed;
   GS.grid = layout.grid;
+  refreshMapVersion('init_round');
   updateChokeCache();
   GS.gcResult = layout.gcResult;
   GS.graphColorMap = GS.gcResult.colorMap;
@@ -4040,6 +4157,7 @@ function beginGameplay() {
       round: GS.round,
       matchId: GS.netMatchId || '',
       countdownStartAt: GS.netCountdownStartAt || 0,
+      map: buildAuthoritativeMapPayload(),
       cspMeta: GS.cspLayoutMeta ? {
         rerollCount: GS.cspLayoutMeta.rerollCount,
         acceptedSeed: GS.cspLayoutMeta.acceptedSeed,
@@ -4072,6 +4190,7 @@ function regenerateMap() {
   const layout = generateAcceptedRoundLayout(GS.seed, GS.round, numP, anchors, { rngSalt: 0xDEAD, tag: 'regen' });
   GS.seed = layout.seed;
   GS.grid = layout.grid;
+  refreshMapVersion('regenerate_map');
   updateChokeCache();
   GS.gcResult = layout.gcResult;
   GS.graphColorMap = GS.gcResult.colorMap;
@@ -4134,7 +4253,7 @@ function regenerateMap() {
   showHudMsg('⚡ Bản đồ thay đổi! 🗺️', 2500);
   if(GS.mode==='online'&&GS.isHost) {
     const meta = nextHostSnapshotMeta();
-    // Gửi seed mới cho client (client tự tái tạo)
+    // Gửi full map authoritative để client không tự generate lệch map
     mqttPublish({
       type:'REGEN_MAP',
       tickId: meta.tickId,
@@ -4147,7 +4266,8 @@ function regenerateMap() {
       mapQualityScore: GS.cspLayoutMeta?.quality?.score ?? 0,
       fallbackCount: GS.cspStats?.fallbackCount ?? 0,
       fairnessScore: GS.cspStats?.fairnessScore ?? 0,
-    });
+      map: buildAuthoritativeMapPayload(),
+    }, { qos: 1 });
     broadcastState();
   }
 }
@@ -4590,8 +4710,11 @@ function tryMove(pidx, dx, dy) {
   if(GS.mode==='online' && !GS.isHost){
     // Gửi MOVE, client prediction
     p.inputSeq++;
-    p.pendingMoves.push({seq:p.inputSeq, dx, dy});
-    mqttPublish({type:'MOVE', seq:p.inputSeq, dx, dy, pidx:GS.myIdx, clientId:GS.clientId});
+    p.pendingMoves.push({seq:p.inputSeq, dx, dy, ts: now});
+    if (p.pendingMoves.length > CFG.NET_MAX_PENDING_INPUTS) {
+      p.pendingMoves.splice(0, p.pendingMoves.length - CFG.NET_MAX_PENDING_INPUTS);
+    }
+    mqttPublish({type:'MOVE', seq:p.inputSeq, dx, dy, pidx:GS.myIdx, clientId:GS.clientId}, { qos: 0 });
     return; // host sẽ xác nhận
   }
   
@@ -6963,6 +7086,12 @@ function renderLoop(ts) {
     updateGoalChannel();
     updateZoneControl();
   }
+  if (GS.running && GS.mode === 'online' && GS.isHost) {
+    if (ts - (GS.netLastTickSnapshotAt || 0) >= CFG.NET_HOST_TICK_SNAPSHOT_MS) {
+      GS.netLastTickSnapshotAt = ts;
+      broadcastState(0, 'tick');
+    }
+  }
   
   // FPS counter
   fpsCounter++;
@@ -8491,8 +8620,11 @@ function onMqttMessage(topic, raw){
     case 'TRAP_REQUEST': handleTrapRequest(msg); break;
     case 'SKILL_REQUEST': handleSkillRequest(msg); break;
     case 'INTERACT_REQUEST': handleInteractRequest(msg); break;
+    case 'MOVE_ACK':  handleMoveAck(msg); break;
     case 'TRAP':      handleTrapMsg(msg); break;
     case 'REGEN_MAP': handleRegenMap(msg); break;
+    case 'MAP_SYNC_REQUEST': handleMapSyncRequest(msg); break;
+    case 'MAP_SYNC': handleMapSync(msg); break;
   }
 }
 
@@ -8751,6 +8883,9 @@ function applyClientInit(msg){
     GS.players.forEach((p,i)=>{ if(msg.players[i]) p.score=msg.players[i].score||0; });
   }
   initRound(msg.seed, msg.players, GS.round>1);
+  if (msg.map) {
+    applyAuthoritativeMapPayload(msg.map, 'init_game');
+  }
   if (msg.cspMeta && GS.cspStats) {
     GS.cspStats = {
       ...GS.cspStats,
@@ -8810,11 +8945,53 @@ function handleMove(msg){
   if(pidx==null||!GS.players[pidx]) return;
   if(!isClientAuthorizedForIdx(clientId, pidx)) return;
   if(pidx===GS.myIdx) return; // host không xử lý move của mình qua mạng
+  const ackAdvanced = ack > (p.lastAckSeq || 0);
+  if (ackAdvanced) p.lastAckSeq = ack;
+  const now = Date.now();
+  p.pendingMoves = p.pendingMoves.filter(m => now - (m.ts || now) <= 2500);
   const p=GS.players[pidx];
   if(typeof dx!=='number'||typeof dy!=='number') return;
   doMovePlayer(pidx,dx,dy);
-  // Gửi ACK + state
-  broadcastState(seq);
+  mqttPublish({
+    type:'MOVE_ACK',
+    pidx,
+    ack:Number(seq || 0),
+    x:p.x,
+    y:p.y,
+    serverTs:Date.now(),
+  }, { qos: 0 });
+  broadcastState(seq, 'move_tick');
+}
+
+function handleMoveAck(msg){
+  if(GS.isHost) return;
+  if(!msg || msg.pidx !== GS.myIdx) return;
+  const p = GS.players[GS.myIdx];
+  if(!p) return;
+  const ack = Number(msg.ack || 0);
+  if (ack > 0) {
+    p.pendingMoves = p.pendingMoves.filter(m => m.seq > ack);
+  }
+  const sx = Number.isFinite(msg.x) ? msg.x : p.x;
+  const sy = Number.isFinite(msg.y) ? msg.y : p.y;
+  let tx = sx, ty = sy;
+  for (const pm of p.pendingMoves) {
+    const nx = tx + pm.dx, ny = ty + pm.dy;
+    if (nx>=0 && nx<CFG.W && ny>=0 && ny<CFG.H && GS.grid[ny*CFG.W+nx]!==CFG.T_WALL) {
+      tx = nx; ty = ny;
+    }
+  }
+  const err = Math.abs(p.x - tx) + Math.abs(p.y - ty);
+  const noPending = p.pendingMoves.length === 0;
+  if (err >= 4 || (noPending && err >= 2)) {
+    p.px = p.x; p.py = p.y; p.lerpT = 0;
+    p.x = tx; p.y = ty;
+  } else if (err === 1 && noPending && ackAdvanced) {
+    const visX = lerp(p.px, p.x, p.lerpT);
+    const visY = lerp(p.py, p.y, p.lerpT);
+    p.px = visX; p.py = visY; p.lerpT = 0;
+    p.x = tx; p.y = ty;
+  }
 }
 
 function handleTrapRequest(msg){
@@ -8856,13 +9033,22 @@ function handleInteractRequest(msg){
 // Host broadcast state
 function broadcastState(ackSeq = 0, reason = 'state_update'){
   if(!GS.isHost) return;
+  const now = Date.now();
+  const isMoveTick = reason === 'move_tick';
+  if (isMoveTick && now - (GS.netLastBroadcastAt || 0) < CFG.NET_SNAPSHOT_MIN_INTERVAL_MS) return;
+  GS.netLastBroadcastAt = now;
   const meta = nextHostSnapshotMeta();
+  GS.snapshotVersion = (GS.snapshotVersion || 0) + 1;
   const snapshot = {
+    snapshotVersion: GS.snapshotVersion,
     tickId: meta.tickId,
     seq: meta.seq,
     serverTs: meta.serverTs,
     reason,
     ack: ackSeq || 0,
+    mapVersion: GS.mapVersion || 0,
+    mapHash: GS.mapHash || computeGridHash(GS.grid),
+    stateHash: `${GS.mapHash || ''}:${GS.netRegenVersion || 0}:${GS.treasureHolder}:${GS.round}`,
     round: GS.round,
     seed: GS.seed,
     running: GS.running,
@@ -8898,7 +9084,7 @@ function broadcastState(ackSeq = 0, reason = 'state_update'){
       captureStart: GS.zone.captureStart,
       captureEnd: GS.zone.captureEnd,
     } : null,
-    events: GS.netRecentEvents.slice(-10),
+    events: isMoveTick ? [] : GS.netRecentEvents.slice(-8),
     regen: GS.netRegenVersion > 0 ? {
       version: GS.netRegenVersion,
       seed: GS.seed,
@@ -8925,28 +9111,50 @@ function handleUpdate(msg){
   const serverTs = Number(snap.serverTs ?? msg.serverTs ?? 0);
   if (!isIncomingSnapshotNewer(tickId, seq, serverTs)) return;
 
+  if (Number.isFinite(snap.mapVersion) && snap.mapVersion > (GS.mapVersion || 0)) {
+    requestMapSync('map_version_newer');
+  } else if (snap.mapHash && GS.mapHash && snap.mapHash !== GS.mapHash) {
+    requestMapSync('map_hash_mismatch');
+  }
+
   if(snap.players){
     for(const pd of snap.players){
       const p=GS.players[pd.idx];
       if(!p) continue;
       if(pd.idx===GS.myIdx){
-        // Client-side prediction reconciliation
-        if(snap.ack){
-          p.pendingMoves=p.pendingMoves.filter(m=>m.seq>snap.ack);
+        const ack = Number(snap.ack || 0);
+        const ackAdvanced = ack > (p.lastAckSeq || 0);
+        if (ackAdvanced) p.lastAckSeq = ack;
+        const now = Date.now();
+        p.pendingMoves = p.pendingMoves.filter(m => now - (m.ts || now) <= 2500);
+        if (ack > 0) {
+          p.pendingMoves=p.pendingMoves.filter(m=>m.seq>ack);
         }
-        // Apply server pos
-        p.px=p.x; p.py=p.y; p.lerpT=0;
-        p.x=pd.x; p.y=pd.y;
-        // Re-apply pending moves
+        let tx=pd.x, ty=pd.y;
         for(const pm of p.pendingMoves){
-          const nx=p.x+pm.dx, ny=p.y+pm.dy;
+          const nx=tx+pm.dx, ny=ty+pm.dy;
           if(nx>=0&&nx<CFG.W&&ny>=0&&ny<CFG.H&&GS.grid[ny*CFG.W+nx]!==CFG.T_WALL){
-            p.x=nx; p.y=ny;
+            tx=nx; ty=ny;
           }
         }
+        const err = Math.abs(p.x - tx) + Math.abs(p.y - ty);
+        const noPending = p.pendingMoves.length === 0;
+        if (err >= 4 || (noPending && err >= 2)) {
+          p.px=p.x; p.py=p.y; p.lerpT=0;
+          p.x=tx; p.y=ty;
+        } else if (err === 1 && noPending && ackAdvanced) {
+          const visX = lerp(p.px, p.x, p.lerpT);
+          const visY = lerp(p.py, p.y, p.lerpT);
+          p.px=visX; p.py=visY; p.lerpT=0;
+          p.x=tx; p.y=ty;
+        }
       } else {
-        p.px=p.x; p.py=p.y; p.lerpT=0;
-        p.x=pd.x; p.y=pd.y;
+        if (p.x !== pd.x || p.y !== pd.y) {
+          const visX = lerp(p.px, p.x, p.lerpT);
+          const visY = lerp(p.py, p.y, p.lerpT);
+          p.px=visX; p.py=visY; p.lerpT=0;
+          p.x=pd.x; p.y=pd.y;
+        }
       }
       p.has=pd.has;
       p.graceUntil = Number.isFinite(pd.graceUntil) ? pd.graceUntil : (p.graceUntil || 0);
@@ -9006,6 +9214,8 @@ function handleUpdate(msg){
   if (snap.regen?.version && snap.regen.version > (GS.netLastAppliedRegenVersion || 0)) {
     GS.netLastAppliedRegenVersion = snap.regen.version;
   }
+  if (Number.isFinite(snap.mapVersion)) GS.mapVersion = Math.max(GS.mapVersion || 0, snap.mapVersion);
+  if (snap.mapHash) GS.mapHash = snap.mapHash;
 
   GS.netClientLastTick = tickId;
   GS.netClientLastSeq = seq;
@@ -9087,6 +9297,34 @@ function handleTrapMsg(msg){
   buildInfluenceMap();
 }
 
+function handleMapSyncRequest(msg){
+  if(!GS.isHost) return;
+  if(!msg?.clientId) return;
+  if (!findRoomPlayerByClientId(msg.clientId)) return;
+  mqttPublish({
+    type: 'MAP_SYNC',
+    targetClientId: msg.clientId,
+    reason: msg.reason || 'request',
+    map: buildAuthoritativeMapPayload(),
+    tickId: GS.netTickId || 0,
+    seq: GS.netSnapshotSeq || 0,
+    serverTs: Date.now(),
+  }, { qos: 1 });
+  netLog('HOST_MAP_SYNC_SENT', { targetClientId: msg.clientId, reason: msg.reason || 'request' });
+}
+
+function handleMapSync(msg){
+  if(GS.isHost) return;
+  if (msg.targetClientId && msg.targetClientId !== GS.clientId) return;
+  if (!msg.map) return;
+  if (applyAuthoritativeMapPayload(msg.map, 'map_sync')) {
+    GS.netClientLastTick = Number(msg.tickId ?? GS.netClientLastTick);
+    GS.netClientLastSeq = Number(msg.seq ?? GS.netClientLastSeq);
+    GS.netClientLastTs = Number(msg.serverTs ?? GS.netClientLastTs);
+    showHudMsg('Đã đồng bộ lại map từ host', 1400);
+  }
+}
+
 // Client nhận tín hiệu host tái sinh map
 function handleRegenMap(msg){
   if(GS.isHost) return;
@@ -9096,57 +9334,10 @@ function handleRegenMap(msg){
   initZone();
   const incomingRegenVersion = Number(msg.regenVersion ?? 0);
   if (incomingRegenVersion > 0 && incomingRegenVersion <= (GS.netLastAppliedRegenVersion || 0)) return;
-  GS.seed = msg.seed;
-  GS.grid = generateMaze(CFG.W, CFG.H, GS.seed, GS.round);
-  updateChokeCache();
-  GS.gcResult = applyGraphColoring(GS.grid, CFG.W, CFG.H);
-  GS.graphColorMap = GS.gcResult.colorMap;
-  buildInfluenceMap();
-  const cspRng = mkRng(GS.seed ^ 0xDEAD);
-  const numP = Math.max(2, GS.players.length);
-  const anchors = GS.players.slice(0, numP).map(p => ({ x: p.x, y: p.y }));
-  const cspResult = cspSolve(GS.grid, GS.gcResult, GS.round, numP, cspRng, CFG.W, CFG.H, null, anchors);
-  GS.cspLog = cspResult.log;
-  GS.cspConstraints = cspResult.constraints;
-  GS.cspStats = {
-    ...cspResult.stats,
-    rerollCount: msg.rerollCount ?? 0,
-    acceptedSeed: msg.acceptedSeed ?? msg.seed,
-    mapQualityScore: Number(msg.mapQualityScore ?? 0),
-  };
-  GS.cspLayoutMeta = {
-    acceptedSeed: GS.cspStats.acceptedSeed,
-    rerollCount: GS.cspStats.rerollCount,
-    accepted: true,
-    acceptReason: 'host_sync',
-    quality: { score: GS.cspStats.mapQualityScore },
-    rejectLogs: [],
-  };
-  GS.netLastAppliedRegenVersion = Math.max(
-    GS.netLastAppliedRegenVersion || 0,
-    incomingRegenVersion || (GS.netLastAppliedRegenVersion || 0)
-  );
-  if (GS.treasureHolder === -1) GS.treasure = cspResult.treasure;
-  updateCspFairnessStats(numP);
-  for (const qp of cspResult.quizCells) {
-    if (GS.grid[qp.y*CFG.W+qp.x] === CFG.T_FLOOR)
-      GS.grid[qp.y*CFG.W+qp.x] = CFG.T_QUIZ;
-  }
-  // Quái vật sẽ được đồng bộ qua MONS từ host, chỉ reset trước
-  GS.monsters = cspResult.monsters.map(pos => makeMonster(pos.x, pos.y));
-  GS.traps = [];
-  // Kiểm tra người chơi bị kẹt trong tường
-  for (const p of GS.players) {
-    if (GS.grid[p.y*CFG.W+p.x] === CFG.T_WALL) {
-      let best=null, bd=9999;
-      for(let y=1;y<CFG.H-1;y++) for(let x=1;x<CFG.W-1;x++) {
-        if(GS.grid[y*CFG.W+x]===CFG.T_WALL) continue;
-        const d=Math.abs(x-p.x)+Math.abs(y-p.y);
-        if(d<bd){bd=d;best={x,y};}
-      }
-      if(best){p.px=p.x;p.py=p.y;p.lerpT=0;p.x=best.x;p.y=best.y;}
-    }
-    setPlayerGrace(p, CFG.PLAYER_GRACE_REGEN_MS);
+  if (msg.map) {
+    applyAuthoritativeMapPayload(msg.map, 'regen_map');
+  } else {
+    requestMapSync('regen_missing_map_payload');
   }
   GS.netClientLastTick = Number(msg.tickId ?? GS.netClientLastTick);
   GS.netClientLastSeq = Number(msg.seq ?? GS.netClientLastSeq);
