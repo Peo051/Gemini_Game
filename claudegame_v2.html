@@ -139,27 +139,38 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 
 /* Thanh gợi ý phím tắt thuật toán */
 #algo-hints {
-  position:fixed; top:10px; left:50%; transform:translateX(-50%);
-  font-size:.62rem; color:#90a8c8; display:flex; gap:10px;
+  position:fixed; top:6px; right:8px; left:auto; transform:none;
+  font-size:.58rem; color:#90a8c8; display:flex; gap:6px;
   align-items:center; background:rgba(8,8,28,0.88);
-  border:1px solid #3a3a6a; border-radius:8px; padding:4px 14px;
+  border:1px solid #3a3a6a; border-radius:8px; padding:3px 8px;
   z-index:60; pointer-events:auto; white-space:nowrap;
-  box-shadow:0 2px 12px rgba(0,0,60,0.6); flex-wrap:wrap; justify-content:center;
+  box-shadow:0 2px 12px rgba(0,0,60,0.6);
+  max-width:calc(100vw - 16px); overflow:hidden;
 }
+#algo-hints .ah-label { color:#f7d36a; font-weight:700; margin-right:1px; }
+/* Trên mobile: thu gọn — chỉ hiện icon, ẩn text label */
+#algo-hints .ah-text { display:inline; }
 #algo-hints kbd {
   background:#1e1e44; border:1px solid #5555a0; border-radius:4px;
-  font-size:.6rem; padding:1px 5px; color:#c0d8ff; font-family:monospace;
+  font-size:.57rem; padding:1px 4px; color:#c0d8ff; font-family:monospace;
   box-shadow:0 1px 0 #333388;
 }
 #algo-hints .ah-btn {
-  cursor:pointer; display:flex; align-items:center; gap:3px;
-  padding:2px 6px; border-radius:5px; transition:background .15s;
+  cursor:pointer; display:flex; align-items:center; gap:2px;
+  padding:2px 5px; border-radius:5px; transition:background .15s;
   border:1px solid transparent;
 }
 #algo-hints .ah-btn:hover { background:#1e2450; border-color:#5555a0; }
 #algo-hints .ah-btn.active { background:#0f2a18; border-color:#0f8; color:#0f8; }
 #algo-hints .ah-btn.active kbd { color:#0f8; border-color:#0f8; }
 #algo-hints .ah-sep { color:#2a3050; }
+@media (max-width:600px) {
+  #algo-hints { font-size:.52rem; gap:3px; padding:2px 6px; top:4px; right:5px; }
+  #algo-hints .ah-text { display:none; }
+  #algo-hints .ah-btn { padding:2px 4px; }
+  #algo-hints kbd { font-size:.52rem; padding:1px 3px; }
+  #algo-hints .ah-sep { display:none; }
+}
 #hud-states { font-size:.64rem; color:#a6c7ff; }
 #hud-objective {
   display:flex; gap:5px; align-items:center; flex:1; min-width:140px;
@@ -653,21 +664,21 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   </div>
   <!-- Thanh gợi ý phím tắt thuật toán -->
   <div id="algo-hints">
-    <span style="color:#f7d36a;font-weight:700;margin-right:2px;">Thuật toán:</span>
-    <span class="ah-btn" id="ah-tab" onclick="toggleDebug();updateAlgoHints()" title="Hiện Debug Panel: AI state, CSP solver, Graph Coloring thông số thời gian thực">
-      <kbd>Tab</kbd> Debug Panel
+    <span class="ah-label">🔬</span>
+    <span class="ah-btn" id="ah-tab" onclick="toggleDebug();updateAlgoHints()" title="Debug Panel: AI state, CSP solver, Graph Coloring thông số thời gian thực">
+      <kbd>Tab</kbd><span class="ah-text"> Debug</span>
     </span>
     <span class="ah-sep">|</span>
-    <span class="ah-btn" id="ah-g" onclick="toggleGraphColoring();updateAlgoHints()" title="Hiện overlay Graph Coloring: tô màu vùng bản đồ theo thuật toán tô màu đồ thị">
-      <kbd>G</kbd> Graph Coloring
+    <span class="ah-btn" id="ah-g" onclick="toggleGraphColoring();updateAlgoHints()" title="Graph Coloring: tô màu vùng bản đồ theo thuật toán tô màu đồ thị">
+      <kbd>G</kbd><span class="ah-text"> Graph</span>
     </span>
     <span class="ah-sep">|</span>
-    <span class="ah-btn" id="ah-i" onclick="toggleInfluenceOverlay();updateAlgoHints()" title="Hiện overlay Influence Map: bản đồ nhiệt nguy hiểm / cơ hội của CPU">
-      <kbd>I</kbd> Influence Map
+    <span class="ah-btn" id="ah-i" onclick="toggleInfluenceOverlay();updateAlgoHints()" title="Influence Map: bản đồ nhiệt nguy hiểm / cơ hội của CPU">
+      <kbd>I</kbd><span class="ah-text"> Influence</span>
     </span>
     <span class="ah-sep">|</span>
-    <span class="ah-btn" id="ah-c" onclick="toggleChokeOverlay();updateAlgoHints()" title="Hiện overlay điểm nghẽn (Choke Points): các ô được AI ưu tiên kiểm soát">
-      <kbd>C</kbd> Choke Points
+    <span class="ah-btn" id="ah-c" onclick="toggleChokeOverlay();updateAlgoHints()" title="Choke Points: các ô AI ưu tiên kiểm soát">
+      <kbd>C</kbd><span class="ah-text"> Choke</span>
     </span>
   </div>
   <div id="hud">
