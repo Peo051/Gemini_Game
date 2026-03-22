@@ -1026,6 +1026,25 @@ function genClientId() {
 function shuffle(arr) { for(let i=arr.length-1;i>0;i--){const j=ri(0,i+1);[arr[i],arr[j]]=[arr[j],arr[i]];} return arr; }
 // Deep clone
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
+/* ================================================================
+   [BÁO CÁO §4.8.3 & §4.8.4 – CẤU TRÚC DỮ LIỆU: MIN BINARY HEAP]
+   Dùng làm open list (priority queue) cho A* và Dijkstra.
+
+   Tại sao cần Min Heap thay vì Array.sort()?
+   • Array.sort():  O(n log n) mỗi lần thêm phần tử → chậm khi nhiều node.
+   • MinBinaryHeap: O(log n) push/pop → hiệu quả vượt trội với maze lớn.
+
+   Thao tác:
+   • push(item): thêm vào cuối, bubble-up về đúng vị trí.
+   • pop():      lấy phần tử nhỏ nhất (compareFn), sift-down để tái cân bằng.
+
+   Dùng với compareFn:
+   • A*:       compareFn = (a,b) => (a.f - b.f) || (a.seq - b.seq)
+     f = g + h(n) = chi phí thực + heuristic Manhattan.
+   • Dijkstra: compareFn = (a,b) => (a.g - b.g) || (a.seq - b.seq)
+     g = chi phí thực (không có heuristic).
+   • seq (tie-breaker): đảm bảo deterministic path khi f/g bằng nhau.
+   ================================================================ */
 // Binary min-heap dùng cho open-list của A* / UCS / Dijkstra.
 class MinBinaryHeap {
   constructor(compareFn) {
@@ -1119,7 +1138,25 @@ function getPlayerName() {
   if(!v) return 'Player';
   return sanitize(v.substring(0,16));
 }
-// BFS tìm đường ngắn nhất trên maze
+/* ================================================================
+   [BÁO CÁO §4.8.2 – THUẬT TOÁN BFS]
+   Breadth-First Search – Tìm đường ngắn nhất không có trọng số.
+
+   Vai trò trong hệ thống:
+   • CPU EASY: thuật toán di chuyển chính (CPU_EASY_MS = 900ms/bước).
+   • FALLBACK: được gọi tự động khi A* hoặc Dijkstra thất bại.
+   • FLOOD-FILL: dùng trong generateMaze() để kiểm tra liên thông
+     và trong khởi tạo để tính distance map từng ô đến target.
+
+   Đặc điểm triển khai:
+   • Dùng Uint8Array(W*H) cho visited → tiết kiệm bộ nhớ.
+   • Dùng Int32Array(W*H) cho prev → reconstruct đường đi O(path_len).
+   • Queue là plain Array với index qi tăng dần → không xóa phần tử,
+     tránh O(n) shift(); hiệu quả với maze W=41, H=25 (1025 ô max).
+
+   Độ phức tạp: O(V + E) = O(W×H) với maze grid.
+   Chỉ số log: q.length khi kết thúc = tổng số node BFS đã duyệt.
+   ================================================================ */
 function bfs(grid, sx,sy, tx,ty, W,H) {
   if(sx===tx && sy===ty) return [];
   const visited = new Uint8Array(W*H);
@@ -1190,7 +1227,29 @@ function drawChokeOverlay() {
   }
   ctx.restore();
 }
-// A* tìm đường (dùng cho CPU khó)
+/* ================================================================
+   [BÁO CÁO §4.8.3 – THUẬT TOÁN A*]
+   A* Search – Tìm đường tối ưu với heuristic hướng dẫn.
+
+   Heuristic: h(n) = |x − tx| + |y − ty|  (Manhattan distance)
+   → Admissible vì maze chỉ cho đi 4 hướng, không đường chéo.
+   → Consistent: h(n) ≤ cost(n→n') + h(n') luôn đúng.
+
+   Cấu trúc dữ liệu:
+   • open list: MinBinaryHeap với compareFn (f ASC, seq ASC)
+     → đảm bảo node f nhỏ nhất luôn được pop() trước, O(log n).
+   • gScore: Float32Array(W*H).fill(Infinity) → g-cost từng node.
+   • prev: Int32Array(W*H).fill(-1) → truy vết đường đi.
+   • seq: tie-break theo thứ tự push → đường đi ổn định (deterministic).
+
+   Khi nào dùng:
+   • CPU NORMAL (CPU_NORMAL_MS = 550ms): tìm đường đơn giản.
+   • Thuần túy, không tính trọng số nguy hiểm.
+   • Xem aStarSafe() để dùng kèm Graph Coloring zone danger.
+
+   Độ phức tạp: O((V+E) log V) với min-heap.
+   Log debug: dbg-cpu-target, dbg-cpu-state trong Debug Panel (Tab).
+   ================================================================ */
 function aStar(grid, sx,sy, tx,ty, W,H) {
   if(sx===tx && sy===ty) return [];
   const heur=(x,y)=>Math.abs(x-tx)+Math.abs(y-ty);
@@ -1233,7 +1292,29 @@ function aStar(grid, sx,sy, tx,ty, W,H) {
 }
 
 /* ================================================================
-   WORLD GEN – sinh mê cung DFS
+   [BÁO CÁO §4.8.1 – THUẬT TOÁN DFS SINH MÊ CUNG]
+   Randomized DFS (Recursive Backtracker) – tạo mê cung ngẫu nhiên
+   nhưng tái tạo được (deterministic) nhờ seed PRNG (mulberry32).
+
+   Thuật toán carve(x, y):
+   1. Đánh dấu ô (x,y) là FLOOR.
+   2. Xáo trộn ngẫu nhiên 4 hướng bước 2 ô [[0,-2],[0,2],[-2,0],[2,0]].
+   3. Với mỗi hướng: nếu ô đích chưa thăm → mở vách ngăn giữa
+      và đệ quy carve(nx, ny).
+   Kết quả: perfect maze (không có vòng lặp, mọi ô liên thông).
+
+   Tùy chỉnh theo round:
+   • Round 1: loopAddRatio=0.12, deadEndPasses=2 (nhiều phương án).
+   • Round 3: loopAddRatio=0.06, deadEndPasses=0 (mê cung chặt hơn).
+
+   Giai đoạn bổ sung sau DFS:
+   • Thêm vòng lặp (loop): mở thêm tường để giảm ngõ cụt.
+   • Giảm ngõ cụt (deadEndPasses): mở tường kề ô chỉ có 1 hàng xóm.
+   • Kiểm tra liên thông: BFS flood-fill + carveCorridor nếu có
+     vùng bị cô lập khỏi base chính.
+
+   Log debug: thứ tự gọi carve(), tổng ô FLOOR sau mỗi pass.
+   Độ phức tạp: O(W×H) cho DFS + O(W×H) cho flood-fill.
    ================================================================ */
 function generateMaze(W, H, seed, round = 1) {
   const rng = mkRng(seed);
@@ -1402,8 +1483,28 @@ function generateMaze(W, H, seed, round = 1) {
 }
 
 /* ================================================================
-   GRAPH COLORING ENGINE – thuật toán tô màu đồ thị
-   Đỉnh = floor/quiz cell, cạnh = 4-hướng kề
+   [BÁO CÁO §4.8.6 – THUẬT TOÁN GRAPH COLORING – PHÂN VÜNG CHIẾN THUẬT]
+   Đỉnh = floor/quiz cell, cạnh = kề 4 hướng (4-connected grid).
+   Mục tiêu: phân hoạch bản đồ thành các vùng kông đồng nhất màu
+   sao cho 2 ô kề nhau luôn có màu khác nhau.
+
+   Thuật toán: Greedy (Duyệt raster order) – O(V+E).
+   Bước 1: Với mỗi ô (x,y) là FLOOR, thu thập màu các hàng xóm
+            vào usedColors (Set).
+   Bước 2: Gán màu nhỏ nhất chưa học trong usedColors.
+   Kết quả: {colorMap: Int16Array, numColors, distribution, nodeCount}
+
+   Ứng dụng trong game (3 vai trò):
+   1. placeQuizGraphColoring(): Mỗi vùng màu đóng góp ít nhất 1 quiz
+      → phân bố đều trên bản đồ, tránh dồn cụm.
+   2. spawnMonsGraphColoring(): Mỗi quái thuộc vùng màu khác nhau
+      → phân tán tối đa, không dồn cụm góc.
+   3. computeZoneDanger(): Tính danger[color] từng vùng
+      → aStarSafe áp dụng dưới dạng cost = 1 + danger*dangerWeight.
+
+   Được gọi: initRound() sau khi generateMaze() xong.
+   Log debug: dbg-gc-colors, dbg-gc-nodes, dbg-gc-dist (Debug Panel).
+   Overlay: phím [G] → toggleGraphColoring() tô màu vùng trên canvas.
    ================================================================ */
 
 // Greedy graph coloring – O(V+E), ổn định với map 41×25
@@ -1606,14 +1707,33 @@ function aStarSafe(grid, gcResult, dangerZones, sx,sy, tx,ty, W,H, dangerWeight=
 }
 
 /* ================================================================
-   PHẦN 3 – UNIFORM COST SEARCH / DIJKSTRA AN TOÀN
-   Khác với aStarSafe (dùng zone-level danger từ graph coloring),
-   dijkstraSafe dùng cell-level danger từ INF_MAP → chính xác hơn.
-   Khi nào dùng:
-     BFS          → CPU easy / pathfinding đơn giản
-     A*           → CPU normal / cần nhanh + heuristic
-     aStarSafe    → CPU hard khi chưa có INF_MAP (khởi tạo)
-     dijkstraSafe → CPU hard sau khi INF_MAP đã build (runtime)
+   [BÁO CÁO §4.8.3 mở rộng – A* VỚI ZONE DANGER TỪ GRAPH COLORING]
+   aStarSafe: mở rộng A* với bản đồ nguy hiểm cấp vùng màu.
+   • Lấy colorMap[oi] từ Graph Coloring → tra dangerZones[color]
+     → cộng vào g-cost: ng = g[cur] + 1 + dangerZones[c]*dangerWeight.
+   • dangerWeight=2 mặc định: vùng có quái/holder chỉ đi khi
+     không có đường khác.
+   Dùng khi: CPU Hard khởi tạo (chưa có INF_MAP). Sau khi INF_MAP build
+   thì chuyển sang dijkstraSafe() chính xác hơn (cell-level danger).
+
+   [BÁO CÁO §4.8.4 – DIJKSTRA TUắN AĀN VỚI TRẌNG SỐ RỦI RO]
+   dijkstraSafe: Uniform Cost Search với chi phí ô động từ INF_MAP.
+   Khác với A* – không có heuristic h(n), bù lại bằng cell-level
+   danger chính xác hơn zone-level.
+
+   costMode = 'safe': AI đang mang treasure về base → tối đa tránh nguy hiểm.
+     cellCost = 1 + danger*3  (+4 nếu choke, +3 nếu shouldAvoidCell)
+   costMode = 'seek': AI đang săn treasure → chấp nhận nguy hiểm.
+     cellCost = 1 + danger*0.5 - opportunity*0.12
+
+   Ghi ý triển khai:
+   • Quiz cell (+3): AI tánh vì mất thời gian trả lời.
+   • Choke point kiểm soát bởi đối thủ (+4): tránh đi qua khi 'safe'.
+   • INF_MAP.danger tính từ: quái (r=5,v=10), bẫy (r=2,v=6),
+     đối thủ (r=3,v=3), choke cache (+2,r=1).
+
+   Kết hợp: Đây là thực thi của hàm f_safety + f_hazard + f_choke
+   trong công thức Utility U(s) tại mức pathfinding.
    ================================================================ */
 
 /**
@@ -1708,6 +1828,37 @@ const INF_MAP = {
   maxOpportunity: 0,
   maxOpportunityCell: null,
 };
+
+/* ================================================================
+   [BÁO CÁO §4.8.8 – INFLUENCE MAP – BẢN ĐỒ ẢNH HƯỞNG]
+   Mỗi ô (x,y) có 2 giá trị float:
+   • danger(x,y)     – nguy hiểm đến từ quái, bẫy, đối thủ, choke point.
+   • opportunity(x,y)– cơ hội từ treasure, holder mang đồ, base CPU.
+
+   Hàm spread(arr, cx, cy, baseVal, radius):
+   • Với mọi ô (x,y) trong Manhattan radius: không xét tường.
+   • Giá trị = baseVal × (1 - d / (radius+1)) → giảm tuyến tính.
+
+   Nguồn danger (*giá trị cơ sở, bán kính):
+   • Quái vật: spread(danger, m.x, m.y, 10, 5)
+   • Bẫy:     spread(danger, t.x, t.y, 6, 2)
+   • Đối thủ:  spread(danger, p.x, p.y, 3, 3) | 1.2 nếu trong grace
+   • Choke:    spread(danger, cp.x, cp.y, 2, 1) – top 10 choke points
+
+   Nguồn opportunity:
+   • Treasure tự do:  spread(opp, treasure.x, treasure.y, 10, 6)
+   • Holder mang đồ:  spread(opp, holder.x, holder.y, 8, 4)  [→1 khi cướp]
+   • Base CPU:         spread(opp, base.x, base.y, 5, 3)
+
+   Kết hợp với Utility U(s):
+   • f_safety(s)  ← shouldAvoidCell(): danger > 13 || nearMon || chokeRisk
+   • f_hazard(s)  ← cellCost += danger * 3 (dijkstraSafe 'safe' mode)
+   • f_advantage  ← scoreCellByInfluence(): opp*2.1 - danger*2.6 - dist*0.45
+
+   Gọi lại: buildInfluenceMap() sau mủi lần quái/người chơi di chuyển.
+   Overlay: phím [I] → toggleInfluenceOverlay() vẽ heat map lên canvas.
+   Log debug: dbg-inf-maxd, dbg-inf-maxo, dbg-inf-cpu, dbg-inf-target.
+   ================================================================ */
 
 /**
  * Rebuild influence map từ trạng thái game hiện tại.
@@ -1879,6 +2030,37 @@ function buildMazeGraph(grid, W, H) {
   }
   return { nodes, adj, nodeIdx };
 }
+
+/* ================================================================
+   [BÁO CÁO §4.8.7 – THUẬT TOÁN TARJAN – TÌM CHOKE POINT]
+   Tarjan DFS tìm articulation points (nút khớp) và bridges (cầu)
+   trên đồ thị mê cung.
+
+   Định nghĩa:
+   • Articulation Point (nút khớp): node u sao cho xóa u khỏi
+     đồ thị sẽ tăng số thành phần liên thông → đường đi duy nhất.
+   • Bridge (cầu): cạnh (u,v) sao cho xóa cạnh đó làm đồ thị mất liên thông.
+
+   Yếu tố key trong Tarjan:
+   • disc[u]: thời gian khám phá node u.
+   • low[u]:  giá trị disc nhỏ nhất có thể đến được qua back edge từ cây con.
+   • u là AP nếu: (root && childCount ≥ 2) || (non-root && low[child] ≥ disc[u])
+
+   Triển khai iterative (dùng Stack thay đệ quy):
+   → Tránh stack overflow với maze 41×25 (có thể có ~500 node/path).
+   Stack element: {u: node_id, ai: adj_index, cc: child_count}
+
+   Xếp hạng choke point (rankChokePoints):
+     rank = 1000/(distCenter+1) + 500/(avgBaseDist+1)
+   → Choke gần trung tâm + nằm giữa nhiều base = quan trọng nhất.
+
+   Cache: CHOKE_CACHE chỉ tính lại khi seed thay đổi (sang ván mới).
+   Ứng dụng:
+   • isCellChokePoint(x,y): trả pointSet O(1) → dijkstraSafe +4 cost.
+   • scoreChokeForAmbush/Defense: AI quyết định phục kích hay phòng thủ.
+   Overlay: phím [C] → drawChokeOverlay() tô điểm khớp trên bản đồ.
+   Log debug: dbg-choke-stats, dbg-choke-top, dbg-choke-cpu.
+   ================================================================ */
 
 /**
  * Tìm articulation points bằng Tarjan DFS iterative.
@@ -9524,6 +9706,1979 @@ window.hostStartGame=hostStartGame;
 window.leaveRoom=leaveRoom;
 window.backToLobby=backToLobby;
 window.mapQualityReport=mapQualityReport;
+
+/* ================================================================
+   ██████  MODULE: STATE MODEL  §4.3
+   GameState · CandidateActions · TransitionModel · TransitionMatrix
+   ================================================================ */
+
+const ACTION_TYPE = Object.freeze({
+  UP:'UP',DOWN:'DOWN',LEFT:'LEFT',RIGHT:'RIGHT',
+  STAY:'STAY',PLACE_TRAP:'PLACE_TRAP',USE_SKILL:'USE_SKILL'
+});
+const MATCH_PHASE = Object.freeze({ EARLY:'EARLY', MID:'MID', LATE:'LATE' });
+const AI_GOAL = Object.freeze({
+  COLLECT_TREASURE:'COLLECT_TREASURE', RETURN_TO_BASE:'RETURN_TO_BASE',
+  INTERCEPT_ENEMY:'INTERCEPT_ENEMY',   CONTROL_CHOKE:'CONTROL_CHOKE',
+  SEEK_SAFETY:'SEEK_SAFETY',           AMBUSH:'AMBUSH',
+  DEFEND_BASE:'DEFEND_BASE',           CONTEST_TREASURE:'CONTEST_TREASURE',
+  CONTROL_ZONE:'CONTROL_ZONE',
+});
+
+class GameState {
+  constructor(d={}) {
+    this.playerPos      = d.playerPos      ?? {x:1,y:1};
+    this.aiPos          = d.aiPos          ?? {x:39,y:23};
+    this.treasurePos    = d.treasurePos    ?? null;
+    this.treasureHolder = d.treasureHolder ?? -1;  // -1=free 0=player 1=AI
+    this.playerBase     = d.playerBase     ?? {x:1,y:1};
+    this.aiBase         = d.aiBase         ?? {x:39,y:23};
+    this.playerScore    = d.playerScore    ?? 0;
+    this.aiScore        = d.aiScore        ?? 0;
+    this.timeRemaining  = d.timeRemaining  ?? 90000;
+    this.timeMax        = d.timeMax        ?? 90000;
+    this.hazards        = d.hazards        ?? [];
+    this.zoneOwner      = d.zoneOwner      ?? -1;
+    this.zoneCenter     = d.zoneCenter     ?? {x:20,y:12};
+    this.chokePoints    = d.chokePoints    ?? [];
+    this.maxDanger      = d.maxDanger      ?? 0;
+    this.maxOpportunity = d.maxOpportunity ?? 0;
+    this.round          = d.round          ?? 1;
+    this.phase          = d.phase          ?? MATCH_PHASE.EARLY;
+  }
+  static mdist(a,b){ return a&&b ? Math.abs(a.x-b.x)+Math.abs(a.y-b.y) : 9999; }
+  static computePhase(rem,mx){ const r=rem/(mx||1); return r>0.66?MATCH_PHASE.EARLY:r>0.33?MATCH_PHASE.MID:MATCH_PHASE.LATE; }
+
+  get distPlayerToTreasure(){ return GameState.mdist(this.playerPos, this.treasurePos); }
+  get distAiToTreasure()    { return GameState.mdist(this.aiPos,     this.treasurePos); }
+  get distAiToBase()        { return GameState.mdist(this.aiPos,     this.aiBase);      }
+  get distPlayerToBase()    { return GameState.mdist(this.playerPos, this.playerBase);  }
+  get playerCarrying()      { return this.treasureHolder===0; }
+  get aiCarrying()          { return this.treasureHolder===1; }
+  get scoreDelta()          { return this.aiScore - this.playerScore; }
+  get nearestDangerToAI()  {
+    return this.hazards.reduce((m,h)=>Math.min(m,GameState.mdist(this.aiPos,h)),9999);
+  }
+
+  /** Snapshot từ GS global hiện tại */
+  static captureFromGS() {
+    if(typeof GS==='undefined'||!GS.grid) return new GameState();
+    const player = GS.players?.find(p=>!p.isBot);
+    const ai     = GS.players?.find(p=>p.isBot);
+    const now    = Date.now();
+    const rem    = Math.max(0,(GS.roundEndTime||now)-now);
+    const hazards=[];
+    for(const m of GS.monsters||[]) hazards.push({x:m.x,y:m.y,type:'monster',danger:8});
+    for(const t of GS.traps||[])    hazards.push({x:t.x,y:t.y,type:'trap',   danger:5});
+    return new GameState({
+      playerPos:      player?{x:player.x,y:player.y}:{x:1,y:1},
+      aiPos:          ai    ?{x:ai.x,    y:ai.y    }:{x:39,y:23},
+      treasurePos:    GS.treasure?{x:GS.treasure.x,y:GS.treasure.y}:null,
+      treasureHolder: GS.treasureHolder??-1,
+      playerBase:     CFG.PLAYER_BASES?.[player?.idx??0]??{x:1,y:1},
+      aiBase:         CFG.PLAYER_BASES?.[ai?.idx??1]    ??{x:39,y:23},
+      playerScore:    GS.scores?.[player?.idx??0]??0,
+      aiScore:        GS.scores?.[ai?.idx??1]    ??0,
+      timeRemaining:  rem, timeMax:90000, hazards,
+      zoneOwner:      GS.zoneOwner??-1,
+      zoneCenter:     {x:CFG.ZONE_CENTER_X??20,y:CFG.ZONE_CENTER_Y??12},
+      chokePoints:    (typeof CHOKE_CACHE!=='undefined')?CHOKE_CACHE.points.slice(0,10):[],
+      maxDanger:      (typeof INF_MAP!=='undefined')?(INF_MAP.maxDanger??0):0,
+      maxOpportunity: (typeof INF_MAP!=='undefined')?(INF_MAP.maxOpportunity??0):0,
+      round:          GS.round??1,
+      phase:          GameState.computePhase(rem,90000),
+    });
+  }
+
+  toJSON(){
+    return {
+      playerPos:this.playerPos, aiPos:this.aiPos,
+      treasurePos:this.treasurePos, treasureHolder:this.treasureHolder,
+      playerScore:this.playerScore, aiScore:this.aiScore,
+      timeRemaining:this.timeRemaining, phase:this.phase, round:this.round,
+      hazardCount:this.hazards.length, zoneOwner:this.zoneOwner,
+    };
+  }
+}
+
+/* CandidateActions – sinh A(S_t) §4.3.3 */
+class CandidateActions {
+  constructor(grid,W,H){ this.grid=grid; this.W=W; this.H=H; }
+  isWalkable(x,y){
+    if(x<0||x>=this.W||y<0||y>=this.H)return false;
+    return this.grid[y*this.W+x]!==CFG.T_WALL;
+  }
+  getValidActions(pos, opts={}){
+    const dirs=[
+      {action:ACTION_TYPE.UP,   dx:0, dy:-1},
+      {action:ACTION_TYPE.DOWN, dx:0, dy: 1},
+      {action:ACTION_TYPE.LEFT, dx:-1,dy: 0},
+      {action:ACTION_TYPE.RIGHT,dx: 1,dy: 0},
+      {action:ACTION_TYPE.STAY, dx:0, dy: 0},
+    ];
+    const out=[];
+    for(const d of dirs){
+      const nx=pos.x+d.dx, ny=pos.y+d.dy;
+      if(d.action===ACTION_TYPE.STAY||this.isWalkable(nx,ny))
+        out.push({...d,newX:nx,newY:ny});
+    }
+    if(opts.canPlaceTrap)
+      out.push({action:ACTION_TYPE.PLACE_TRAP,dx:0,dy:0,newX:pos.x,newY:pos.y});
+    return out;
+  }
+  topK(actions, target, k=4){
+    if(!target||actions.length<=k)return actions;
+    return actions
+      .map(a=>({...a,_h:Math.abs(a.newX-target.x)+Math.abs(a.newY-target.y)}))
+      .sort((a,b)=>a._h-b._h).slice(0,k);
+  }
+}
+
+/* TransitionModel – f(S,a_p,a_ai) §4.3.4 */
+class TransitionModel {
+  constructor(grid,W,H){ this.grid=grid; this.W=W; this.H=H; }
+  _move(pos,action){
+    const d={UP:[0,-1],DOWN:[0,1],LEFT:[-1,0],RIGHT:[1,0],STAY:[0,0]};
+    const [dx,dy]=d[action]||[0,0];
+    const nx=pos.x+dx, ny=pos.y+dy;
+    if(nx<0||nx>=this.W||ny<0||ny>=this.H||this.grid[ny*this.W+nx]===CFG.T_WALL)return pos;
+    return {x:nx,y:ny};
+  }
+  apply(state, pAction, aiAction){
+    const next=new GameState(JSON.parse(JSON.stringify(state.toJSON())));
+    next.playerPos=this._move(state.playerPos,pAction);
+    next.aiPos    =this._move(state.aiPos,    aiAction);
+    next.hazards  =state.hazards;
+    next.chokePoints=state.chokePoints;
+    next.zoneCenter =state.zoneCenter;
+    // Nhặt treasure
+    if(state.treasurePos && state.treasureHolder===-1){
+      if(next.playerPos.x===state.treasurePos.x&&next.playerPos.y===state.treasurePos.y)
+        next.treasureHolder=0;
+      else if(next.aiPos.x===state.treasurePos.x&&next.aiPos.y===state.treasurePos.y)
+        next.treasureHolder=1;
+    }
+    // Ghi điểm về base
+    const pb=state.playerBase, ab=state.aiBase;
+    if(next.treasureHolder===0&&next.playerPos.x===pb.x&&next.playerPos.y===pb.y){
+      next.playerScore+=10; next.treasureHolder=-1;
+    }
+    if(next.treasureHolder===1&&next.aiPos.x===ab.x&&next.aiPos.y===ab.y){
+      next.aiScore+=10; next.treasureHolder=-1;
+    }
+    next.timeRemaining=Math.max(0,state.timeRemaining-200);
+    next.phase=GameState.computePhase(next.timeRemaining,state.timeMax);
+    return next;
+  }
+}
+
+/* TransitionMatrix – P(S'|S,a) §4.7 */
+class TransitionMatrix {
+  constructor(){ this.data=new Map(); }
+  _ks(s){
+    const dpt=Math.min(9,s.distPlayerToTreasure??9);
+    const dat=Math.min(9,s.distAiToTreasure??9);
+    return `${dpt}:${dat}:${(s.phase||'E')[0]}:${s.treasureHolder+1}:${s.zoneOwner+1}`;
+  }
+  _k(s,a){ return `${this._ks(s)}|${a}`; }
+  record(sf,action,st,ok){
+    const k=this._k(sf,action);
+    if(!this.data.has(k))this.data.set(k,{total:0,ok:0,outcomes:{}});
+    const e=this.data.get(k);
+    e.total++; if(ok)e.ok++;
+    const kt=this._ks(st); e.outcomes[kt]=(e.outcomes[kt]||0)+1;
+  }
+  pSuccess(s,a){ const e=this.data.get(this._k(s,a)); return e&&e.total?e.ok/e.total:0.5; }
+  observationCount(s,a){ return this.data.get(this._k(s,a))?.total??0; }
+  toJSON(){ const o={}; for(const[k,v]of this.data)o[k]=v; return o; }
+  static fromJSON(obj){
+    const tm=new TransitionMatrix();
+    for(const[k,v]of Object.entries(obj||{}))tm.data.set(k,v);
+    return tm;
+  }
+}
+
+/* singleton */
+window.TRANSITION_MATRIX = TransitionMatrix.fromJSON(
+  JSON.parse(localStorage.getItem('mazeDuel_tm')||'{}')
+);
+window.GAME_STATE_MODULE = { GameState, CandidateActions, TransitionModel, TransitionMatrix,
+                              ACTION_TYPE, MATCH_PHASE, AI_GOAL };
+
+/* ================================================================
+   ██████  MODULE: OBJECTIVE SYSTEM §4.2
+   ================================================================ */
+
+class ObjectiveSystem {
+  evaluate(state){
+    const obs=[]; const S=state;
+    const danger=S.nearestDangerToAI;
+    if(danger<=2) obs.push({goal:AI_GOAL.SEEK_SAFETY,  priority:85+(3-danger)*5, reason:'danger near'});
+    if(!S.aiCarrying&&S.treasureHolder===-1&&S.treasurePos)
+      obs.push({goal:AI_GOAL.COLLECT_TREASURE, priority:62+(S.distPlayerToTreasure-S.distAiToTreasure)*1.5, reason:'free treasure'});
+    if(S.aiCarrying)
+      obs.push({goal:AI_GOAL.RETURN_TO_BASE,   priority:78+(S.timeRemaining<20000?15:0), reason:'carrying'});
+    if(S.playerCarrying)
+      obs.push({goal:AI_GOAL.CONTEST_TREASURE, priority:68, reason:'enemy carrying'});
+    if(!S.aiCarrying&&S.chokePoints.length)
+      obs.push({goal:AI_GOAL.CONTROL_CHOKE,    priority:45, reason:'zone control'});
+    if(S.zoneOwner!==1)
+      obs.push({goal:AI_GOAL.CONTROL_ZONE,     priority:35, reason:'energy zone'});
+    if(S.scoreDelta>0&&S.phase===MATCH_PHASE.LATE)
+      obs.push({goal:AI_GOAL.DEFEND_BASE,      priority:72, reason:'protect lead'});
+    obs.sort((a,b)=>b.priority-a.priority);
+    return obs;
+  }
+
+  primary(state){ return this.evaluate(state)[0]||null; }
+
+  static weightsFor(goal, phase){
+    const base={
+      EARLY:{w_treasure:.30,w_base:.10,w_safety:.18,w_compete:.15,w_hazard:.10,w_choke:.10,w_score:.04,w_survival:.02,w_adv:.01},
+      MID:  {w_treasure:.22,w_base:.22,w_safety:.16,w_compete:.14,w_hazard:.09,w_choke:.08,w_score:.04,w_survival:.03,w_adv:.02},
+      LATE: {w_treasure:.12,w_base:.35,w_safety:.14,w_compete:.10,w_hazard:.10,w_choke:.06,w_score:.06,w_survival:.05,w_adv:.02},
+    };
+    const w={...(base[phase]||base.MID)};
+    switch(goal){
+      case AI_GOAL.RETURN_TO_BASE:   w.w_base+=.15;w.w_treasure-=.10;w.w_safety+=.05;break;
+      case AI_GOAL.COLLECT_TREASURE: w.w_treasure+=.12;w.w_base-=.05;break;
+      case AI_GOAL.SEEK_SAFETY:      w.w_safety+=.20;w.w_survival+=.10;w.w_treasure-=.15;break;
+      case AI_GOAL.AMBUSH:
+      case AI_GOAL.INTERCEPT_ENEMY:  w.w_choke+=.12;w.w_compete+=.08;break;
+      case AI_GOAL.DEFEND_BASE:      w.w_base+=.20;w.w_safety+=.10;w.w_treasure-=.15;break;
+    }
+    const tot=Object.values(w).reduce((s,v)=>s+v,0);
+    for(const k in w)w[k]=+(w[k]/tot).toFixed(4);
+    return w;
+  }
+}
+window.OBJECTIVE_SYSTEM = new ObjectiveSystem();
+
+/* ================================================================
+   ██████  MODULE: UTILITY ENGINE + DECISION MATRIX §4.4–4.5
+   ================================================================ */
+
+class UtilityEngine {
+  /**
+   * Tính U(s) = Σ w_i · f_i(s) cho một GameState tương lai.
+   * 9 thành phần: treasure, base, safety, competition, hazard,
+   *               choke, score, survival, advantage.
+   * @param {GameState} s
+   * @param {Object} w – trọng số từ ObjectiveSystem.weightsFor()
+   * @returns {{ total:number, breakdown:Object }}
+   */
+  evaluate(s, w){
+    const W=CFG.W, maxD=W+CFG.H;
+
+    // f1: khoảng cách đến treasure (bình thường hóa, AI gần = tốt)
+    const f_treasure = s.treasurePos
+      ? Math.max(0, 1 - s.distAiToTreasure/maxD)
+      : (s.aiCarrying ? 1.0 : 0.4);
+
+    // f2: điểm lợi thế về base khi mang treasure
+    const f_base = s.aiCarrying
+      ? Math.max(0, 1 - s.distAiToBase/maxD)
+      : (s.playerCarrying ? Math.max(0, 1 - s.distAiToBase/maxD)*0.5 : 0.3);
+
+    // f3: an toàn (danger thấp = tốt)
+    const cellDanger = (typeof getCellDanger==='function')
+      ? getCellDanger(s.aiPos.x, s.aiPos.y) : 0;
+    const f_safety = Math.max(0, 1 - cellDanger/20);
+
+    // f4: cạnh tranh – AI gần treasure hơn player = lợi thế
+    const f_compete = s.treasurePos
+      ? Math.max(0, Math.min(1, 0.5 + (s.distPlayerToTreasure-s.distAiToTreasure)/(maxD*0.5)))
+      : 0.5;
+
+    // f5: hazard penalty
+    const nearHaz = s.nearestDangerToAI;
+    const f_hazard = nearHaz>=5 ? 1.0 : nearHaz>=3 ? 0.7 : nearHaz>=2 ? 0.4 : 0.1;
+
+    // f6: kiểm soát choke point
+    let f_choke=0.3;
+    if(s.chokePoints.length){
+      const d=GameState.mdist(s.aiPos,s.chokePoints[0]);
+      f_choke = Math.max(0, 1 - d/10);
+    }
+
+    // f7: tiến độ điểm số
+    const f_score = Math.max(0, Math.min(1, 0.5 + s.scoreDelta/20));
+
+    // f8: survival (HP / 100)
+    const f_survival = 0.8; // game không có HP rõ ràng, dùng mặc định
+
+    // f9: lợi thế tổng hợp từ influence map
+    const cellOpp = (typeof getCellOpportunity==='function')
+      ? getCellOpportunity(s.aiPos.x, s.aiPos.y) : 0;
+    const f_adv = Math.max(0, Math.min(1, cellOpp/10));
+
+    const breakdown={
+      f_treasure:+f_treasure.toFixed(3), f_base:+f_base.toFixed(3),
+      f_safety:+f_safety.toFixed(3),     f_compete:+f_compete.toFixed(3),
+      f_hazard:+f_hazard.toFixed(3),     f_choke:+f_choke.toFixed(3),
+      f_score:+f_score.toFixed(3),       f_survival:+f_survival.toFixed(3),
+      f_adv:+f_adv.toFixed(3),
+    };
+
+    const total = +(
+      w.w_treasure * f_treasure +
+      w.w_base     * f_base     +
+      w.w_safety   * f_safety   +
+      w.w_compete  * f_compete  +
+      w.w_hazard   * f_hazard   +
+      w.w_choke    * f_choke    +
+      w.w_score    * f_score    +
+      w.w_survival * f_survival +
+      w.w_adv      * f_adv
+    ).toFixed(4);
+
+    return { total:+total, breakdown, weights:w };
+  }
+}
+
+/* DecisionMatrix §4.5 */
+class DecisionMatrix {
+  /**
+   * Xây dựng và xếp hạng bảng hành động × tiêu chí.
+   * @param {GameState} state - S_t hiện tại
+   * @param {Array<{action,dx,dy,newX,newY}>} candidates - A(S_t)
+   * @param {TransitionModel} tm
+   * @param {UtilityEngine} ue
+   * @param {Object} weights
+   * @returns {{ rows:Array, selected:Object, rejected:Array }}
+   */
+  build(state, candidates, tm, ue, weights){
+    const rows=[];
+    for(const cand of candidates){
+      // Giả lập trạng thái kế tiếp (player STAY, AI dùng action này)
+      const nextS = tm.apply(state, ACTION_TYPE.STAY, cand.action);
+      const {total, breakdown} = ue.evaluate(nextS, weights);
+
+      // Xác suất thành công từ TransitionMatrix
+      const pS = TRANSITION_MATRIX.pSuccess(state, cand.action);
+      const n   = TRANSITION_MATRIX.observationCount(state, cand.action);
+
+      // Expected utility = E[U] = P(success)*U + P(fail)*(U*0.3)
+      const eu = +(pS*total + (1-pS)*total*0.3).toFixed(4);
+
+      rows.push({
+        action:cand.action, dx:cand.dx, dy:cand.dy,
+        newX:cand.newX,     newY:cand.newY,
+        utility: total, expectedUtility: eu,
+        pSuccess: +pS.toFixed(3), observations: n,
+        breakdown,
+      });
+    }
+
+    // Sắp xếp theo expected utility giảm dần
+    rows.sort((a,b)=>b.expectedUtility-a.expectedUtility);
+
+    return {
+      rows,
+      selected: rows[0]||null,
+      rejected: rows.slice(1),
+    };
+  }
+}
+
+/* MinimaxEngine §4.4.3 – Alpha-Beta Pruning */
+class MinimaxEngine {
+  constructor(grid,W,H){
+    this.tm=new TransitionModel(grid,W,H);
+    this.ca=new CandidateActions(grid,W,H);
+    this.ue=new UtilityEngine();
+    this._nodes=0;
+    this._pruned=0;
+  }
+
+  /**
+   * Tìm hành động tốt nhất cho AI (MAX player) dùng Minimax + Alpha-Beta.
+   * @param {GameState} state - S_t
+   * @param {number} depth - Độ sâu giới hạn (báo cáo §4.6 – tránh bùng nổ)
+   * @param {Object} weights
+   * @returns {{ action:string, value:number, nodesSearched:number, pruned:number }}
+   */
+  search(state, depth=3, weights){
+    this._nodes=0; this._pruned=0;
+    const aiActions = this.ca.topK(
+      this.ca.getValidActions(state.aiPos), state.treasurePos, 4
+    );
+    let bestVal=-Infinity, bestAct=ACTION_TYPE.STAY;
+    for(const a of aiActions){
+      const pActs=this.ca.topK(
+        this.ca.getValidActions(state.playerPos), state.treasurePos, 3
+      );
+      // Worst-case player response (MIN)
+      let minVal=Infinity;
+      for(const pa of pActs){
+        const next=this.tm.apply(state,pa.action,a.action);
+        const v=this._minimax(next,depth-1,false,-Infinity,Infinity,weights);
+        if(v<minVal)minVal=v;
+      }
+      if(minVal>bestVal){ bestVal=minVal; bestAct=a.action; }
+    }
+    return {action:bestAct, value:bestVal,
+            nodesSearched:this._nodes, pruned:this._pruned};
+  }
+
+  _minimax(state,depth,isMax,alpha,beta,weights){
+    this._nodes++;
+    if(depth===0||state.timeRemaining<=0){
+      return this.ue.evaluate(state,weights).total;
+    }
+    if(isMax){
+      const acts=this.ca.topK(
+        this.ca.getValidActions(state.aiPos), state.treasurePos, 3
+      );
+      let v=-Infinity;
+      for(const a of acts){
+        const next=this.tm.apply(state,ACTION_TYPE.STAY,a.action);
+        v=Math.max(v,this._minimax(next,depth-1,false,alpha,beta,weights));
+        alpha=Math.max(alpha,v);
+        if(beta<=alpha){ this._pruned++; break; } // Alpha-Beta cutoff
+      }
+      return v;
+    } else {
+      const acts=this.ca.topK(
+        this.ca.getValidActions(state.playerPos), state.treasurePos, 3
+      );
+      let v=Infinity;
+      for(const a of acts){
+        const next=this.tm.apply(state,a.action,ACTION_TYPE.STAY);
+        v=Math.min(v,this._minimax(next,depth-1,true,alpha,beta,weights));
+        beta=Math.min(beta,v);
+        if(beta<=alpha){ this._pruned++; break; }
+      }
+      return v;
+    }
+  }
+}
+
+/* Singleton engines */
+window.UTILITY_ENGINE  = new UtilityEngine();
+window.DECISION_MATRIX = new DecisionMatrix();
+let _minimaxEngine = null; // khởi tạo lazy sau khi GS.grid sẵn sàng
+
+/* ================================================================
+   ██████  MODULE: MATCH LOGGER + ALGORITHM LOGGER §4.8
+   ================================================================ */
+
+class MatchLogger {
+  constructor(){ this.entries=[]; this.matchId=Date.now(); this.algoLogs={}; }
+
+  /** Ghi 1 sự kiện (mỗi lượt AI ra quyết định) */
+  log(eventType, data={}){
+    this.entries.push({
+      t: Date.now(), matchId:this.matchId, event:eventType, ...data
+    });
+    // Giữ tối đa 2000 entries để không chiếm RAM
+    if(this.entries.length>2000)this.entries.shift();
+  }
+
+  /** Ghi kết quả quyết định AI với đầy đủ breakdown */
+  logDecision(state, decisionResult){
+    this.log('AI_DECISION',{
+      state:state.toJSON(),
+      selected: decisionResult.selected?.action,
+      utility:  decisionResult.selected?.utility,
+      eu:       decisionResult.selected?.expectedUtility,
+      top3:     decisionResult.rows?.slice(0,3).map(r=>({
+        action:r.action, eu:r.expectedUtility, u:r.utility
+      })),
+    });
+    // Cập nhật TransitionMatrix nếu có state trước đó
+    if(this._prevState && decisionResult.selected){
+      TRANSITION_MATRIX.record(
+        this._prevState, decisionResult.selected.action, state, true
+      );
+    }
+    this._prevState = state;
+  }
+
+  /** Ghi log của từng thuật toán */
+  logAlgo(algoName, data){
+    if(!this.algoLogs[algoName])this.algoLogs[algoName]=[];
+    this.algoLogs[algoName].push({t:Date.now(),...data});
+    if(this.algoLogs[algoName].length>200)this.algoLogs[algoName].shift();
+  }
+
+  /** Ghi sau khi kết thúc trận */
+  logMatchEnd(winner, scores, durationMs){
+    this.log('MATCH_END',{winner,scores,durationMs});
+    // Lưu TransitionMatrix vào localStorage
+    try{
+      localStorage.setItem('mazeDuel_tm',
+        JSON.stringify(TRANSITION_MATRIX.toJSON()));
+    }catch(e){}
+  }
+
+  /** Export JSON & download */
+  exportJSON(){
+    const payload={
+      matchId:this.matchId,
+      exportedAt:new Date().toISOString(),
+      entries:this.entries,
+      algoLogs:this.algoLogs,
+      transitionMatrix:TRANSITION_MATRIX.toJSON(),
+    };
+    const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=`mazeDuel_log_${this.matchId}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  /** Lấy thống kê nhanh */
+  stats(){
+    const decisions=this.entries.filter(e=>e.event==='AI_DECISION');
+    return {
+      totalEvents: this.entries.length,
+      aiDecisions: decisions.length,
+      avgUtility:  decisions.length
+        ? +(decisions.reduce((s,e)=>s+(e.utility||0),0)/decisions.length).toFixed(3)
+        : 0,
+    };
+  }
+}
+
+window.MATCH_LOGGER = new MatchLogger();
+
+/* ================================================================
+   ██████  MODULE: PROBABILITY ESTIMATOR §4.7
+   ================================================================ */
+
+class ProbabilityEstimator {
+  /**
+   * Ước lượng P(success|action,state) từ TransitionMatrix.
+   * Có thể kết hợp prior (Laplace smoothing).
+   */
+  estimate(state, action, alpha=1){
+    const n  = TRANSITION_MATRIX.observationCount(state,action);
+    const ok = TRANSITION_MATRIX.data.get(
+      TRANSITION_MATRIX._k?.(state,action)||'')?.ok ?? 0;
+    // Laplace smoothing: P = (ok+α)/(n+2α)
+    return +((ok+alpha)/(n+2*alpha)).toFixed(4);
+  }
+
+  /** E[U(a,s)] = Σ P(s'|s,a)·U(s') — tính qua các kết quả được ghi log */
+  expectedUtility(state, action, weights){
+    const dist = TRANSITION_MATRIX.distribution?.(state,action) || {};
+    const entries = Object.entries(dist);
+    if(!entries.length)
+      return UTILITY_ENGINE.evaluate(state, weights).total;
+    // Dùng P-weighted average (simplified – chỉ có abstract state keys)
+    let eu=0;
+    for(const [,p] of entries){
+      eu += p * UTILITY_ENGINE.evaluate(state, weights).total;
+    }
+    return +eu.toFixed(4);
+  }
+
+  /**
+   * Bảng xác suất tất cả hành động tại state hiện tại.
+   * @returns {Array<{action,pSuccess,observations}>}
+   */
+  allActionProbs(state){
+    return Object.values(ACTION_TYPE).map(a=>({
+      action:a,
+      pSuccess: this.estimate(state,a),
+      observations: TRANSITION_MATRIX.observationCount(state,a),
+    }));
+  }
+}
+
+window.PROB_ESTIMATOR = new ProbabilityEstimator();
+
+/* ================================================================
+   ██████  MODULE: RANKING SYSTEM §4.9
+   ================================================================ */
+
+class RankingSystem {
+  constructor(){
+    this.KEY='mazeDuel_ranking';
+    this.entries=this._load();
+  }
+  _load(){
+    try{ return JSON.parse(localStorage.getItem(this.KEY)||'[]'); }
+    catch(e){ return []; }
+  }
+  _save(){ try{localStorage.setItem(this.KEY,JSON.stringify(this.entries));}catch(e){} }
+
+  /** Thêm kết quả trận đấu mới vào bảng xếp hạng */
+  addResult({ playerName='Player', aiDiff='normal', winner, scores,
+              treasureCount=0, durationMs=0, round=1 }){
+    const isWin = winner==='player';
+    let entry = this.entries.find(e=>e.name===playerName);
+    if(!entry){
+      entry={ name:playerName, elo:1000, wins:0, losses:0,
+              treasures:0, streak:0, totalMs:0, matches:0,
+              pveScore:0 };
+      this.entries.push(entry);
+    }
+    // Custom PvE score
+    const pts = isWin
+      ? (10 + treasureCount*5 + (aiDiff==='hard'?8:aiDiff==='normal'?4:0)
+         - Math.floor(durationMs/15000))
+      : (-3 + treasureCount*2);
+    entry.pveScore   = Math.max(0, entry.pveScore + pts);
+    entry.wins       += isWin?1:0;
+    entry.losses     += isWin?0:1;
+    entry.treasures  += treasureCount;
+    entry.streak      = isWin?entry.streak+1:0;
+    entry.totalMs    += durationMs;
+    entry.matches    ++;
+    entry.winRate    = +(entry.wins/entry.matches).toFixed(3);
+    entry.avgDurSec  = +(entry.totalMs/entry.matches/1000).toFixed(1);
+    entry.lastMatch  = new Date().toISOString();
+
+    // ELO-like update (AI Elo cố định theo độ khó)
+    const aiElo = aiDiff==='hard'?1300:aiDiff==='normal'?1100:900;
+    const exp   = 1/(1+Math.pow(10,(aiElo-entry.elo)/400));
+    const K     = 32;
+    entry.elo   = Math.round(entry.elo + K*((isWin?1:0)-exp));
+
+    this._save();
+    // Log sự kiện
+    MATCH_LOGGER.logMatchEnd(winner, scores, durationMs);
+    return entry;
+  }
+
+  /** Top-N theo điểm pveScore */
+  topN(n=10){
+    return [...this.entries].sort((a,b)=>b.pveScore-a.pveScore).slice(0,n);
+  }
+
+  /** Reset tất cả (debug) */
+  reset(){ this.entries=[]; this._save(); }
+}
+
+window.RANKING_SYSTEM = new RankingSystem();
+
+/* ================================================================
+   ██████  MODULE: AI DECISION HOOK §4.4
+   Hook vào game loop — thay thế/bổ sung quyết định AI hiện tại.
+   Gọi sau mỗi lượt AI từ cpuTick() hoặc tương đương.
+   ================================================================ */
+
+/**
+ * Hàm trung tâm: AI đưa ra quyết định có giải thích.
+ * Trả về {action, matrix, objective, explanation}
+ * Có thể gọi từ bất kỳ đâu: aiDecisionFull()
+ */
+function aiDecisionFull(){
+  if(typeof GS==='undefined'||!GS.grid) return null;
+  const state = GameState.captureFromGS();
+
+  // 1. Xác định mục tiêu
+  const primary = OBJECTIVE_SYSTEM.primary(state);
+  const weights  = ObjectiveSystem.weightsFor(
+    primary?.goal??AI_GOAL.COLLECT_TREASURE, state.phase
+  );
+
+  // 2. Sinh hành động ứng viên
+  const ai = GS.players?.find(p=>p.isBot);
+  if(!ai) return null;
+
+  if(!_minimaxEngine) _minimaxEngine=new MinimaxEngine(GS.grid,CFG.W,CFG.H);
+  const ca   = new CandidateActions(GS.grid,CFG.W,CFG.H);
+  const cands= ca.getValidActions({x:ai.x,y:ai.y});
+  const tm   = new TransitionModel(GS.grid,CFG.W,CFG.H);
+
+  // 3. Decision Matrix
+  const matrix = DECISION_MATRIX.build(state, cands, tm, UTILITY_ENGINE, weights);
+
+  // 4. Minimax (depth tùy độ khó)
+  const depth = GS.cpuDiff==='hard'?3:GS.cpuDiff==='normal'?2:1;
+  let mmResult=null;
+  try{
+    mmResult = _minimaxEngine.search(state, depth, weights);
+  }catch(e){ console.warn('[aiDecisionFull] Minimax error:',e); }
+
+  // 5. Chọn hành động cuối (ưu tiên minimax nếu hard)
+  const finalAction = (GS.cpuDiff==='hard'&&mmResult)
+    ? mmResult.action
+    : (matrix.selected?.action??ACTION_TYPE.STAY);
+
+  // 6. Log quyết định
+  MATCH_LOGGER.logDecision(state,{
+    ...matrix,
+    minimaxAction: mmResult?.action,
+    minimaxNodes:  mmResult?.nodesSearched,
+    minimaxPruned: mmResult?.pruned,
+  });
+
+  // 7. Cập nhật debug panel
+  _updateAIDebugPanels(state, primary, matrix, mmResult, weights);
+
+  return {
+    action: finalAction,
+    matrix,
+    objective: primary,
+    weights,
+    minimax: mmResult,
+    explanation: _buildExplanation(state,primary,matrix,finalAction),
+  };
+}
+
+function _buildExplanation(state, primary, matrix, chosenAction){
+  const sel = matrix.rows?.find(r=>r.action===chosenAction)||matrix.selected;
+  return [
+    `Goal: ${primary?.goal??'—'} (priority=${primary?.priority??0})`,
+    `Chosen: ${chosenAction} | EU=${sel?.expectedUtility??0} | U=${sel?.utility??0}`,
+    `Safety: f_safety=${sel?.breakdown?.f_safety??0}`,
+    `Phase: ${state.phase} | Treasure: ${state.treasureHolder===-1?'free':state.treasureHolder===1?'AI':'player'}`,
+  ].join(' | ');
+}
+
+function _updateAIDebugPanels(state, primary, matrix, mm, weights){
+  const _t=(id,txt)=>{ const el=document.getElementById(id); if(el)el.textContent=txt; };
+  _t('dbg-cpu-reason', primary?`${primary.goal}(${primary.priority|0})`:'-');
+  _t('dbg-cpu-state',  `Phase:${state.phase} TH:${state.treasureHolder}`);
+  if(mm){
+    _t('dbg-cpu-minimax', `depth=${mm.value?.toFixed?mm.value.toFixed(3):mm.value} nodes=${mm.nodesSearched}`);
+    _t('dbg-cpu-miniact', mm.action||'-');
+  }
+  if(matrix.rows?.length){
+    const top3=matrix.rows.slice(0,3)
+      .map(r=>`${r.action}=${r.expectedUtility}`).join(' | ');
+    _t('dbg-cpu-utils', top3);
+  }
+}
+
+// Console helpers
+window.aiDecisionReport=function(){
+  const r=aiDecisionFull();
+  if(!r){console.log('No AI in game.');return;}
+  console.group('[AI Decision Report]');
+  console.log('Objective:', r.objective);
+  console.table(r.matrix.rows?.map(row=>({
+    action:row.action, EU:row.expectedUtility, U:row.utility,
+    pSuccess:row.pSuccess, ...row.breakdown})));
+  if(r.minimax) console.log('Minimax:',r.minimax);
+  console.log('Explanation:',r.explanation);
+  console.groupEnd();
+  return r;
+};
+window.exportLogs=function(){ MATCH_LOGGER.exportJSON(); };
+window.logStats=function(){ return MATCH_LOGGER.stats(); };
+window.probReport=function(){
+  const s=GameState.captureFromGS();
+  console.table(PROB_ESTIMATOR.allActionProbs(s));
+};
+window.rankingReport=function(){ console.table(RANKING_SYSTEM.topN()); };
+
+/* ================================================================
+   ██████  MODULE: RANKING PANEL UI §4.9 + HOTKEYS §K
+   ================================================================ */
+
+(function setupRankingUI(){
+  const panel=document.createElement('div');
+  panel.id='ranking-panel';
+  panel.style.cssText=[
+    'display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%)',
+    'background:rgba(10,18,35,.97);border:1px solid #4af;border-radius:12px',
+    'padding:20px;min-width:400px;max-width:520px;z-index:9999;color:#eef',
+    'font-family:monospace;font-size:.82rem;box-shadow:0 8px 32px #000a'
+  ].join(';');
+  panel.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="font-size:1.1rem;font-weight:bold;color:#4af">🏆 Leaderboard</span>
+      <button onclick="document.getElementById('ranking-panel').style.display='none'"
+        style="background:#333;border:none;color:#fff;padding:4px 10px;border-radius:6px;cursor:pointer">✕</button>
+    </div>
+    <div id="ranking-body" style="overflow-y:auto;max-height:340px"></div>
+    <div style="margin-top:10px;color:#888;font-size:.72rem">
+      R = toggle | Ctrl+E = export logs | P = probabilities
+    </div>`;
+  document.body.appendChild(panel);
+
+  window.showRankingPanel=function(){
+    const body=document.getElementById('ranking-body');
+    const top=RANKING_SYSTEM.topN(10);
+    if(!top.length){
+      body.innerHTML='<p style="color:#888;text-align:center">Chưa có dữ liệu. Hãy chơi 1 ván!</p>';
+    } else {
+      body.innerHTML=`
+        <table style="width:100%;border-collapse:collapse;font-size:.78rem">
+          <tr style="color:#4af;border-bottom:1px solid #4af4">
+            <th>#</th><th>Tên</th><th>ELO</th><th>W/L</th>
+            <th>Streak</th><th>PvE Score</th><th>Win%</th>
+          </tr>
+          ${top.map((e,i)=>`
+          <tr style="border-bottom:1px solid #2228;${i===0?'color:#ffd700':i===1?'color:#ccc':i===2?'color:#cd7f32':''}">
+            <td style="text-align:center">${i+1}</td>
+            <td>${e.name}</td>
+            <td>${e.elo}</td>
+            <td>${e.wins}/${e.losses}</td>
+            <td>${e.streak}🔥</td>
+            <td><b>${e.pveScore}</b></td>
+            <td>${(e.winRate*100).toFixed(0)}%</td>
+          </tr>`).join('')}
+        </table>`;
+    }
+    panel.style.display='block';
+  };
+})();
+
+/* Panel Utility Breakdown */
+(function setupUtilityPanel(){
+  const panel=document.createElement('div');
+  panel.id='utility-panel';
+  panel.style.cssText=[
+    'display:none;position:fixed;bottom:10px;right:10px;',
+    'background:rgba(5,15,30,.95);border:1px solid #6af;border-radius:10px',
+    'padding:12px;min-width:260px;z-index:9998;color:#ddf;',
+    'font-family:monospace;font-size:.75rem;max-height:380px;overflow-y:auto'
+  ].join(';');
+  panel.innerHTML=`
+    <div style="font-weight:bold;color:#6af;margin-bottom:6px">⚙ Utility Breakdown (U)</div>
+    <div id="util-body">Nhấn U để cập nhật</div>`;
+  document.body.appendChild(panel);
+
+  window.showUtilityPanel=function(){
+    const r=aiDecisionFull();
+    if(!r){document.getElementById('util-body').textContent='Không có AI.';return;}
+    const rows=r.matrix.rows?.slice(0,5)||[];
+    const sel=r.matrix.selected;
+    document.getElementById('util-body').innerHTML=`
+      <div style="color:#ff9;margin-bottom:4px">Goal: ${r.objective?.goal??'-'} (Phase:${r.matrix.rows?.[0]?r.matrix.rows[0].breakdown?'':'':''} ${GameState.captureFromGS().phase})</div>
+      ${rows.map(row=>{
+        const bd=row.breakdown||{};
+        const isSel=row.action===sel?.action;
+        return `<div style="margin-bottom:4px;${isSel?'color:#4f4':'color:#aaa'}">
+          ${isSel?'▶':'  '} <b>${row.action}</b> EU=${row.expectedUtility} U=${row.utility}
+          <div style="padding-left:10px;font-size:.7rem;color:#88a">
+            treasure=${bd.f_treasure} base=${bd.f_base} safety=${bd.f_safety}
+            compete=${bd.f_compete} choke=${bd.f_choke}
+          </div>
+        </div>`;
+      }).join('')}
+    `;
+  };
+})();
+
+/* ================================================================
+   ██████  MODULE: HOTKEY SYSTEM §K
+   Phím tắt mới (không ghi đè phím game hiện tại)
+   ================================================================ */
+
+(function setupHotkeys(){
+  const panels={
+    'ranking-panel': false,
+    'utility-panel': false,
+  };
+
+  document.addEventListener('keydown', e=>{
+    // Bỏ qua khi đang gõ input
+    if(['INPUT','TEXTAREA'].includes(e.target?.tagName)) return;
+    const key=e.key.toLowerCase();
+
+    // R – Ranking / Leaderboard
+    if(key==='r' && !e.ctrlKey && !e.altKey){
+      const p=document.getElementById('ranking-panel');
+      if(p.style.display==='none'){ window.showRankingPanel(); }
+      else { p.style.display='none'; }
+      return;
+    }
+
+    // U – Utility Panel
+    if(key==='u' && !e.ctrlKey){
+      const p=document.getElementById('utility-panel');
+      if(p.style.display==='none'){ p.style.display='block'; window.showUtilityPanel(); }
+      else { p.style.display='none'; }
+      return;
+    }
+
+    // Ctrl+E – Export Logs
+    if(key==='e' && e.ctrlKey){
+      e.preventDefault();
+      MATCH_LOGGER.exportJSON();
+      showHudMsg('📥 Log exported!', 2500);
+      return;
+    }
+
+    // Ctrl+R – Reset Ranking (giữ Ctrl để tránh nhầm)
+    if(key==='r' && e.ctrlKey){
+      e.preventDefault();
+      if(confirm('Xóa toàn bộ bảng xếp hạng?')){ RANKING_SYSTEM.reset(); showHudMsg('Ranking cleared!',2000); }
+      return;
+    }
+
+    // P – Console probability report
+    if(key==='p' && !e.ctrlKey){
+      const s=GameState.captureFromGS();
+      const probs=PROB_ESTIMATOR.allActionProbs(s);
+      console.table(probs);
+      showHudMsg('📊 Probabilities → Console (F12)',2500);
+      return;
+    }
+
+    // F1 – AI Decision Report (console)
+    if(e.key==='F1'){
+      e.preventDefault();
+      window.aiDecisionReport();
+      showHudMsg('🤖 AI Decision → Console (F12)',2500);
+      return;
+    }
+  });
+
+  console.info('[Hotkeys] R=Ranking | U=Utility | Ctrl+E=Export | P=Probs | F1=AI Report');
+})();
+
+/* ================================================================
+   ██████  HOOK VÀO GAME: tự động gọi cuối mỗi trận
+   ================================================================ */
+
+// Monkey-patch endRound để ghi ranking
+const _origEndRound = (typeof endRound==='function') ? endRound : null;
+if(_origEndRound){
+  window.endRound = function(...args){
+    try{
+      const ai=GS?.players?.find(p=>p.isBot);
+      const pl=GS?.players?.find(p=>!p.isBot);
+      const winner = (GS?.scores?.[pl?.idx??0]||0) > (GS?.scores?.[ai?.idx??1]||0)
+        ? 'player' : 'ai';
+      RANKING_SYSTEM.addResult({
+        playerName: pl?.name||'Player',
+        aiDiff: GS.cpuDiff||'normal',
+        winner,
+        scores: GS.scores||[],
+        durationMs: Date.now() - (MATCH_LOGGER.matchId||Date.now()),
+        round: GS.round||1,
+      });
+      // Reset logger cho trận mới
+      MATCH_LOGGER.matchId=Date.now();
+      MATCH_LOGGER.entries=[];
+      _minimaxEngine=null; // rebuild với grid mới
+    }catch(err){ console.warn('[endRound hook]',err); }
+    return _origEndRound.apply(this,args);
+  };
+}
+
+console.info('[maze_modules] ✅ All modules loaded: GameState · Objective · Utility · DecisionMatrix · Minimax · Logger · Probability · Ranking · Hotkeys');
+console.info('Usage: aiDecisionReport() | exportLogs() | probReport() | rankingReport() | logStats()');
+
+
+const ALGO_LOG = {
+  /** BFS: ghi sau mỗi lần gọi bfs() */
+  bfs(sx,sy,tx,ty,result){
+    MATCH_LOGGER.logAlgo('BFS',{
+      from:{x:sx,y:sy}, to:{x:tx,y:ty},
+      found:!!result, pathLen:result?.length??0,
+    });
+  },
+  /** A*: thống kê sau mỗi lần gọi */
+  astar(sx,sy,tx,ty,result,openListFinalSize){
+    MATCH_LOGGER.logAlgo('ASTAR',{
+      from:{x:sx,y:sy}, to:{x:tx,y:ty},
+      found:!!result, pathLen:result?.length??0,
+      openFinalSize:openListFinalSize??0,
+    });
+  },
+  /** Dijkstra */
+  dijkstra(sx,sy,tx,ty,result,pathCost,costMode){
+    MATCH_LOGGER.logAlgo('DIJKSTRA',{
+      from:{x:sx,y:sy}, to:{x:tx,y:ty},
+      found:!!result, pathLen:result?.length??0,
+      pathCost:pathCost??0, costMode
+    });
+  },
+  /** DFS Maze Generation */
+  mazeGen(W,H,seed,round,floorCount){
+    MATCH_LOGGER.logAlgo('DFS_MAZE',{W,H,seed,round,floorCount});
+  },
+  /** Graph Coloring */
+  graphColor(numColors,nodeCount,distribution){
+    MATCH_LOGGER.logAlgo('GRAPH_COLOR',{numColors,nodeCount,distribution});
+  },
+  /** Tarjan choke points */
+  tarjan(apCount,bridgeCount,topChoke){
+    MATCH_LOGGER.logAlgo('TARJAN',{
+      articulationPoints:apCount, bridges:bridgeCount, topChoke
+    });
+  },
+  /** Influence Map */
+  influenceMap(maxDanger,maxOpp,dangerCell,oppCell){
+    MATCH_LOGGER.logAlgo('INFLUENCE_MAP',{
+      maxDanger,maxOpportunity:maxOpp, maxDangerCell:dangerCell, maxOppCell:oppCell
+    });
+  },
+  /** CSP */
+  csp(status,constraintCount,violations,placed){
+    MATCH_LOGGER.logAlgo('CSP',{status,constraintCount,violations,placed});
+  },
+  /** Minimax */
+  minimax(depth,nodes,pruned,bestVal,bestAction){
+    MATCH_LOGGER.logAlgo('MINIMAX',{depth,nodesSearched:nodes,pruned,bestVal,bestAction});
+  },
+};
+
+window.ALGO_LOG = ALGO_LOG;
+
+/* Monkey-patch các hàm hiện có để tự động log (non-breaking) */
+(function patchAlgorithms(){
+  // Patch bfs
+  if(typeof bfs==='function'){
+    const _bfs=bfs;
+    window.bfs=function(grid,sx,sy,tx,ty,W,H){
+      const r=_bfs(grid,sx,sy,tx,ty,W,H);
+      ALGO_LOG.bfs(sx,sy,tx,ty,r);
+      return r;
+    };
+  }
+  // Patch aStar
+  if(typeof aStar==='function'){
+    const _as=aStar;
+    window.aStar=function(grid,sx,sy,tx,ty,W,H){
+      const r=_as(grid,sx,sy,tx,ty,W,H);
+      ALGO_LOG.astar(sx,sy,tx,ty,r,0);
+      return r;
+    };
+  }
+  // Patch dijkstraSafe
+  if(typeof dijkstraSafe==='function'){
+    const _ds=dijkstraSafe;
+    window.dijkstraSafe=function(grid,sx,sy,tx,ty,W,H,costMode,actorIdx){
+      const r=_ds(grid,sx,sy,tx,ty,W,H,costMode,actorIdx);
+      ALGO_LOG.dijkstra(sx,sy,tx,ty,r,r?.length??0,costMode);
+      return r;
+    };
+  }
+  // Patch buildInfluenceMap
+  if(typeof buildInfluenceMap==='function'){
+    const _bim=buildInfluenceMap;
+    window.buildInfluenceMap=function(){
+      _bim();
+      if(typeof INF_MAP!=='undefined'){
+        ALGO_LOG.influenceMap(
+          INF_MAP.maxDanger, INF_MAP.maxOpportunity,
+          INF_MAP.maxDangerCell, INF_MAP.maxOpportunityCell
+        );
+      }
+    };
+  }
+  // Patch applyGraphColoring
+  if(typeof applyGraphColoring==='function'){
+    const _agc=applyGraphColoring;
+    window.applyGraphColoring=function(grid,W,H){
+      const r=_agc(grid,W,H);
+      if(r) ALGO_LOG.graphColor(r.numColors,r.nodeCount,r.distribution?.slice(0,8));
+      return r;
+    };
+  }
+  // Patch updateChokeCache (wraps Tarjan)
+  if(typeof updateChokeCache==='function'){
+    const _ucc=updateChokeCache;
+    window.updateChokeCache=function(){
+      _ucc();
+      if(typeof CHOKE_CACHE!=='undefined'){
+        ALGO_LOG.tarjan(
+          CHOKE_CACHE.points.length,
+          CHOKE_CACHE.bridges.length,
+          CHOKE_CACHE.points[0]||null
+        );
+      }
+    };
+  }
+  console.info('[AlgoLogger] Patches applied: bfs, aStar, dijkstraSafe, buildInfluenceMap, applyGraphColoring, updateChokeCache');
+})();
+
+/* ================================================================
+   ██████  ALGORITHM SIMULATION STATE §K
+   Mỗi thuật toán có mode: off | result | simulate | paused
+   ================================================================ */
+
+const ALGO_SIM = {
+  states: {
+    DFS:           {mode:'off', speed:1},
+    BFS:           {mode:'off', speed:1},
+    ASTAR:         {mode:'off', speed:1},
+    DIJKSTRA:      {mode:'off', speed:1},
+    CSP:           {mode:'off', speed:1},
+    GRAPH_COLORING:{mode:'off', speed:1},
+    TARJAN:        {mode:'off', speed:1},
+    INFLUENCE:     {mode:'off', speed:1},
+    UTILITY:       {mode:'off', speed:1},
+    MINIMAX:       {mode:'off', speed:1},
+  },
+
+  toggle(name){
+    const s=this.states[name];
+    if(!s) return;
+    s.mode = s.mode==='off' ? 'result' : 'off';
+    this._applyOverlay(name, s.mode!=='off');
+    showHudMsg(`${name}: ${s.mode}`, 1500);
+    MATCH_LOGGER.logAlgo('SIM_TOGGLE',{algo:name,mode:s.mode});
+  },
+
+  _applyOverlay(name, on){
+    // Map thuật toán → hàm toggle overlay hiện tại
+    const map={
+      GRAPH_COLORING: ()=>{ if(typeof toggleGraphColoring==='function') toggleGraphColoring(on); },
+      INFLUENCE:      ()=>{ if(typeof INF_MAP!=='undefined'){ INF_MAP.debugOverlay=on; }},
+      TARJAN:         ()=>{ if(typeof CHOKE_CACHE!=='undefined'){ CHOKE_CACHE.debugOverlay=on; }},
+    };
+    map[name]?.();
+  },
+
+  speedUp(name){
+    const s=this.states[name];
+    if(s) s.speed=Math.min(8,s.speed*2);
+    showHudMsg(`${name} speed: ${s?.speed}x`,1200);
+  },
+  speedDown(name){
+    const s=this.states[name];
+    if(s) s.speed=Math.max(0.25,s.speed/2);
+    showHudMsg(`${name} speed: ${s?.speed}x`,1200);
+  },
+
+  getLog(name,last=20){
+    return (MATCH_LOGGER.algoLogs[name]||[]).slice(-last);
+  }
+};
+
+window.ALGO_SIM = ALGO_SIM;
+
+/* ================================================================
+   ██████  EXTENDED DEBUG PANELS §L
+   ================================================================ */
+
+/* ── 1. DECISION MATRIX PANEL ── */
+(function setupDecisionMatrixPanel(){
+  const p=document.createElement('div');
+  p.id='dm-panel';
+  p.style.cssText=[
+    'display:none;position:fixed;top:10px;right:10px;',
+    'background:rgba(5,12,28,.96);border:1px solid #fa8;border-radius:10px;',
+    'padding:12px;min-width:340px;max-width:480px;z-index:9997;',
+    'color:#ffe;font-family:monospace;font-size:.72rem;max-height:440px;overflow-y:auto'
+  ].join('');
+  p.innerHTML=`
+    <div style="font-weight:bold;color:#fa8;margin-bottom:6px">
+      📊 Decision Matrix  <span id="dm-phase" style="color:#8cf;font-size:.68rem"></span>
+    </div>
+    <div id="dm-body">Nhấn M để cập nhật</div>`;
+  document.body.appendChild(p);
+
+  window.showDecisionMatrix=function(){
+    const r=aiDecisionFull();
+    const ph=document.getElementById('dm-phase');
+    const body=document.getElementById('dm-body');
+    if(!r){ body.textContent='Không có AI.'; return; }
+    const s=GameState.captureFromGS();
+    if(ph) ph.textContent=`Phase:${s.phase} | Goal:${r.objective?.goal??'-'}`;
+
+    const rows=r.matrix.rows||[];
+    body.innerHTML=`
+      <table style="width:100%;border-collapse:collapse;font-size:.68rem">
+        <tr style="color:#fa8;border-bottom:1px solid #fa84">
+          <th>Action</th><th>U</th><th>EU</th><th>P✓</th>
+          <th>trsr</th><th>base</th><th>safe</th><th>choke</th>
+        </tr>
+        ${rows.map((row,i)=>{
+          const bd=row.breakdown||{};
+          const isSel=i===0;
+          return `<tr style="border-bottom:1px solid #2224;${isSel?'background:#1a2a0a;color:#6f6':''}">
+            <td><b>${isSel?'▶':' '} ${row.action}</b></td>
+            <td>${row.utility}</td>
+            <td>${row.expectedUtility}</td>
+            <td>${row.pSuccess}</td>
+            <td>${bd.f_treasure??'-'}</td>
+            <td>${bd.f_base??'-'}</td>
+            <td>${bd.f_safety??'-'}</td>
+            <td>${bd.f_choke??'-'}</td>
+          </tr>`;
+        }).join('')}
+      </table>
+      <div style="margin-top:6px;color:#888;font-size:.66rem">
+        Weights: ${Object.entries(r.weights||{}).map(([k,v])=>`${k.replace('w_','')}=${v}`).join(' ')}
+      </div>`;
+  };
+})();
+
+/* ── 2. LOG PANEL ── */
+(function setupLogPanel(){
+  const p=document.createElement('div');
+  p.id='log-panel';
+  p.style.cssText=[
+    'display:none;position:fixed;bottom:10px;left:10px;',
+    'background:rgba(5,12,28,.96);border:1px solid #5cf;border-radius:10px;',
+    'padding:10px;width:320px;max-height:300px;z-index:9997;',
+    'color:#cef;font-family:monospace;font-size:.66rem;overflow-y:auto'
+  ].join('');
+  p.innerHTML=`
+    <div style="font-weight:bold;color:#5cf;margin-bottom:5px">📋 Match Log (last 30)</div>
+    <div id="log-body"></div>`;
+  document.body.appendChild(p);
+
+  window.refreshLogPanel=function(){
+    const body=document.getElementById('log-body');
+    if(!body) return;
+    const entries=MATCH_LOGGER.entries.slice(-30).reverse();
+    body.innerHTML=entries.map(e=>{
+      const ts=new Date(e.t).toISOString().slice(11,23);
+      let detail='';
+      if(e.event==='AI_DECISION')
+        detail=`→ ${e.selected} EU=${e.eu}`;
+      else if(e.event==='MATCH_END')
+        detail=`Winner:${e.winner}`;
+      return `<div style="border-bottom:1px solid #2229;padding:2px 0">
+        <span style="color:#888">${ts}</span>
+        <span style="color:#5cf"> ${e.event}</span>
+        <span style="color:#aaa"> ${detail}</span>
+      </div>`;
+    }).join('');
+  };
+
+  // Auto-refresh khi panel mở
+  setInterval(()=>{
+    const p2=document.getElementById('log-panel');
+    if(p2&&p2.style.display!=='none') window.refreshLogPanel();
+  },1500);
+})();
+
+/* ── 3. TRANSITION MATRIX PANEL ── */
+(function setupTransitionPanel(){
+  const p=document.createElement('div');
+  p.id='tm-panel';
+  p.style.cssText=[
+    'display:none;position:fixed;top:60px;left:50%;transform:translateX(-50%);',
+    'background:rgba(5,12,28,.97);border:1px solid #c8f;border-radius:10px;',
+    'padding:14px;min-width:360px;max-width:520px;max-height:400px;overflow-y:auto;',
+    'z-index:9997;color:#ecf;font-family:monospace;font-size:.72rem'
+  ].join('');
+  p.innerHTML=`
+    <div style="font-weight:bold;color:#c8f;margin-bottom:8px">
+      🔄 Transition Matrix  P(S'|S,a)
+    </div>
+    <div id="tm-body">Chưa có dữ liệu. Hãy chơi vài ván để tích lũy log.</div>`;
+  document.body.appendChild(p);
+
+  window.showTransitionMatrix=function(){
+    const body=document.getElementById('tm-body');
+    const data=TRANSITION_MATRIX.data;
+    if(!data||data.size===0){
+      body.innerHTML=`<p style="color:#888">Chưa có dữ liệu. Chơi vài ván để TransitionMatrix tích lũy.</p>`;
+      return;
+    }
+    const rows=[];
+    for(const[key,val]of data){
+      const[stateKey,action]=key.split('|');
+      rows.push({stateKey,action,total:val.total,ok:val.ok,
+        pSuccess:val.total?+(val.ok/val.total).toFixed(3):0.5});
+    }
+    rows.sort((a,b)=>b.total-a.total);
+    body.innerHTML=`
+      <div style="color:#888;font-size:.66rem;margin-bottom:6px">
+        ${data.size} state-action pairs | Total observations: ${rows.reduce((s,r)=>s+r.total,0)}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:.68rem">
+        <tr style="color:#c8f;border-bottom:1px solid #c8f4">
+          <th>State Key</th><th>Action</th><th>N</th><th>OK</th><th>P(ok)</th>
+        </tr>
+        ${rows.slice(0,20).map(r=>`
+        <tr style="border-bottom:1px solid #2224">
+          <td style="color:#888;font-size:.6rem">${r.stateKey}</td>
+          <td>${r.action}</td><td>${r.total}</td><td>${r.ok}</td>
+          <td style="${r.pSuccess>0.6?'color:#6f6':r.pSuccess<0.4?'color:#f66':''}">${r.pSuccess}</td>
+        </tr>`).join('')}
+      </table>`;
+  };
+})();
+
+/* ── 4. ALGORITHM LOG PANEL ── */
+(function setupAlgoLogPanel(){
+  const p=document.createElement('div');
+  p.id='algo-log-panel';
+  p.style.cssText=[
+    'display:none;position:fixed;top:10px;left:50%;transform:translateX(-50%);',
+    'background:rgba(5,12,28,.97);border:1px solid #a8f;border-radius:10px;',
+    'padding:12px;min-width:420px;max-width:600px;max-height:420px;overflow-y:auto;',
+    'z-index:9997;color:#d8f;font-family:monospace;font-size:.7rem'
+  ].join('');
+  p.innerHTML=`
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap" id="algo-tab-btns"></div>
+    <div id="algo-log-body" style="font-size:.68rem">Chọn thuật toán phía trên...</div>`;
+  document.body.appendChild(p);
+
+  let _activeAlgo='BFS';
+  const ALGOS=['BFS','ASTAR','DIJKSTRA','DFS_MAZE','GRAPH_COLOR','TARJAN','INFLUENCE_MAP','CSP','MINIMAX'];
+
+  const tabsEl=document.getElementById('algo-tab-btns');
+  for(const a of ALGOS){
+    const btn=document.createElement('button');
+    btn.textContent=a;
+    btn.style.cssText='background:#1a1a3a;border:1px solid #a8f4;color:#c8f;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:.66rem';
+    btn.onclick=()=>{ _activeAlgo=a; renderAlgoLog(); };
+    tabsEl?.appendChild(btn);
+  }
+
+  function renderAlgoLog(){
+    const body=document.getElementById('algo-log-body');
+    if(!body) return;
+    const logs=(MATCH_LOGGER.algoLogs[_activeAlgo]||[]).slice(-15).reverse();
+    if(!logs.length){
+      body.innerHTML=`<p style="color:#888">Chưa có log cho ${_activeAlgo}.</p>`;
+      return;
+    }
+    body.innerHTML=`<b style="color:#a8f">${_activeAlgo}</b> (last ${logs.length})<br><br>`
+      +logs.map(e=>{
+        const ts=new Date(e.t).toISOString().slice(11,23);
+        const detail=Object.entries(e)
+          .filter(([k])=>k!=='t')
+          .map(([k,v])=>`${k}:${typeof v==='object'?JSON.stringify(v):v}`)
+          .join('  ');
+        return `<div style="border-bottom:1px solid #2224;padding:2px 0;word-break:break-all">
+          <span style="color:#666">${ts}</span> ${detail}</div>`;
+      }).join('');
+  }
+
+  window.refreshAlgoLogPanel=renderAlgoLog;
+  setInterval(()=>{
+    const panel=document.getElementById('algo-log-panel');
+    if(panel&&panel.style.display!=='none') renderAlgoLog();
+  }, 2000);
+})();
+
+/* ── 5. HELP OVERLAY ── */
+(function setupHelpOverlay(){
+  const p=document.createElement('div');
+  p.id='help-overlay-ext';
+  p.style.cssText=[
+    'display:none;position:fixed;top:0;left:0;width:100%;height:100%;',
+    'background:rgba(0,0,0,.85);z-index:10000;overflow-y:auto;',
+    'font-family:monospace;color:#ddf;padding:24px;box-sizing:border-box'
+  ].join('');
+  p.innerHTML=`
+<div style="max-width:700px;margin:0 auto">
+  <div style="display:flex;justify-content:space-between;margin-bottom:16px">
+    <h2 style="color:#4af;margin:0">⌨ Keyboard Shortcuts – Maze Duel AI System</h2>
+    <button onclick="document.getElementById('help-overlay-ext').style.display='none'"
+      style="background:#333;border:none;color:#fff;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:1rem">✕</button>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div>
+      <h3 style="color:#fa8;margin:0 0 8px">UI Panels</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:.8rem">
+        <tr><td style="color:#4af;width:100px">R</td><td>🏆 Leaderboard / Ranking</td></tr>
+        <tr><td style="color:#4af">U</td><td>⚙  Utility Breakdown Panel</td></tr>
+        <tr><td style="color:#4af">M</td><td>📊 Decision Matrix Panel</td></tr>
+        <tr><td style="color:#4af">N</td><td>🔄 Transition Matrix Panel</td></tr>
+        <tr><td style="color:#4af">L</td><td>📋 Match Log Panel</td></tr>
+        <tr><td style="color:#4af">A</td><td>🔬 Algorithm Log Panel</td></tr>
+        <tr><td style="color:#4af">H</td><td>❓ This Help Overlay</td></tr>
+        <tr><td style="color:#4af">Tab</td><td>🐛 Debug Panel (existing)</td></tr>
+      </table>
+      <h3 style="color:#fa8;margin:12px 0 8px">Actions</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:.8rem">
+        <tr><td style="color:#4af;width:100px">Ctrl+E</td><td>📥 Export Logs (JSON)</td></tr>
+        <tr><td style="color:#4af">Ctrl+R</td><td>🗑  Reset Ranking</td></tr>
+        <tr><td style="color:#4af">P</td><td>📊 Probability Report → Console</td></tr>
+        <tr><td style="color:#4af">F1</td><td>🤖 AI Decision Report → Console</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3 style="color:#fa8;margin:0 0 8px">Algorithm Toggles</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:.8rem">
+        <tr><td style="color:#6f6;width:110px">1</td><td>Toggle DFS overlay</td></tr>
+        <tr><td style="color:#6f6">2</td><td>Toggle BFS overlay</td></tr>
+        <tr><td style="color:#6f6">3</td><td>Toggle A* overlay</td></tr>
+        <tr><td style="color:#6f6">4</td><td>Toggle Dijkstra overlay</td></tr>
+        <tr><td style="color:#6f6">5</td><td>Toggle CSP overlay</td></tr>
+        <tr><td style="color:#6f6">G</td><td>Toggle Graph Coloring (existing)</td></tr>
+        <tr><td style="color:#6f6">C</td><td>Toggle Choke/Tarjan (existing)</td></tr>
+        <tr><td style="color:#6f6">I</td><td>Toggle Influence Map (existing)</td></tr>
+        <tr><td style="color:#6f6">6</td><td>Toggle Utility overlay</td></tr>
+        <tr><td style="color:#6f6">7</td><td>Toggle Minimax info</td></tr>
+      </table>
+      <h3 style="color:#fa8;margin:12px 0 8px">Console Commands</h3>
+      <div style="font-size:.72rem;color:#aaa;line-height:1.8">
+        <code>aiDecisionReport()</code> – AI full decision<br>
+        <code>exportLogs()</code> – Download log JSON<br>
+        <code>probReport()</code> – Probability table<br>
+        <code>rankingReport()</code> – Leaderboard table<br>
+        <code>logStats()</code> – Logger statistics<br>
+        <code>algorithmLogReport()</code> – All algo logs
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:16px;padding:10px;background:#0a1a0a;border-radius:8px;font-size:.72rem">
+    <b style="color:#6f6">Data Flow:</b>
+    <span style="color:#888">GameLoop → GameState.captureFromGS() → ObjectiveSystem.primary()
+    → UtilityEngine.evaluate() → DecisionMatrix.build() → MinimaxEngine.search()
+    → MatchLogger.logDecision() → TRANSITION_MATRIX.record() → localStorage</span>
+  </div>
+</div>`;
+  document.body.appendChild(p);
+  window.showHelpOverlay=function(){
+    p.style.display=p.style.display==='none'?'block':'none';
+  };
+})();
+
+/* ================================================================
+   ██████  EXTENDED HOTKEYS PHASE 2
+   ================================================================ */
+
+(function setupHotkeysPhase2(){
+  document.addEventListener('keydown',e=>{
+    if(['INPUT','TEXTAREA'].includes(e.target?.tagName))return;
+    const key=e.key;
+
+    // H – Help
+    if(key==='h'||key==='H'){
+      window.showHelpOverlay(); return;
+    }
+    // M – Decision Matrix
+    if(key==='m'||key==='M'){
+      const p=document.getElementById('dm-panel');
+      if(p.style.display==='none'){p.style.display='block';window.showDecisionMatrix();}
+      else p.style.display='none';
+      return;
+    }
+    // N – Transition Matrix
+    if(key==='n'||key==='N'){
+      const p=document.getElementById('tm-panel');
+      if(p.style.display==='none'){p.style.display='block';window.showTransitionMatrix();}
+      else p.style.display='none';
+      return;
+    }
+    // L – Log Panel
+    if(key==='l'||key==='L'){
+      const p=document.getElementById('log-panel');
+      if(p.style.display==='none'){p.style.display='block';window.refreshLogPanel();}
+      else p.style.display='none';
+      return;
+    }
+    // A – Algorithm Log Panel
+    if(key==='a'||key==='A'){
+      const p=document.getElementById('algo-log-panel');
+      if(p.style.display==='none'){p.style.display='block';window.refreshAlgoLogPanel();}
+      else p.style.display='none';
+      return;
+    }
+    // Số 1-7: Algorithm toggles
+    if(key==='1'){ ALGO_SIM.toggle('DFS');          return; }
+    if(key==='2'){ ALGO_SIM.toggle('BFS');          return; }
+    if(key==='3'){ ALGO_SIM.toggle('ASTAR');        return; }
+    if(key==='4'){ ALGO_SIM.toggle('DIJKSTRA');     return; }
+    if(key==='5'){ ALGO_SIM.toggle('CSP');          return; }
+    if(key==='6'){ ALGO_SIM.toggle('UTILITY');      return; }
+    if(key==='7'){ ALGO_SIM.toggle('MINIMAX');      return; }
+  });
+  console.info('[Hotkeys Phase 2] H=Help | M=DMatrix | N=TransMatrix | L=Log | A=AlgoLog | 1-7=Algo toggles');
+})();
+
+/* ================================================================
+   ██████  CONSOLE HELPERS PHASE 2
+   ================================================================ */
+
+window.algorithmLogReport=function(){
+  const logs=MATCH_LOGGER.algoLogs;
+  console.group('[Algorithm Log Report]');
+  for(const[name,entries]of Object.entries(logs)){
+    console.group(`${name} (${entries.length} entries)`);
+    console.table(entries.slice(-10));
+    console.groupEnd();
+  }
+  console.groupEnd();
+};
+
+// Auto-update Decision Matrix panel nếu đang mở
+setInterval(()=>{
+  const dm=document.getElementById('dm-panel');
+  if(dm&&dm.style.display!=='none') window.showDecisionMatrix();
+  const tm=document.getElementById('tm-panel');
+  if(tm&&tm.style.display!=='none') window.showTransitionMatrix();
+},3000);
+
+console.info('[Phase 2] ✅ Algorithm Logger hooks · Extended Debug Panels (DMatrix/TransMatrix/Log/AlgoLog/Help) · Hotkeys (H/M/N/L/A/1-7) loaded.');
+
+/* ================================================================
+   ██████  PHASE 3 – CANVAS OVERLAYS, SIMULATION CONTROL,
+           MINIMAX PANEL, FINALIZED HOTKEYS §11–12
+   ================================================================ */
+
+/* ── SIMULATION CONTROL (pause / speed) ── */
+const SIM_CTRL = {
+  paused: false,
+  speed: 1.0,        // multiplier 0.25x – 4x
+  _overlayActive: false,
+  pause(){ this.paused=!this.paused; showHudMsg(this.paused?'⏸ PAUSED':'▶ RESUMED',1500); },
+  faster(){ this.speed=Math.min(4,+(this.speed*2).toFixed(2)); showHudMsg(`⚡ Speed: ${this.speed}x`,1200); },
+  slower(){ this.speed=Math.max(0.25,+(this.speed/2).toFixed(2)); showHudMsg(`🐢 Speed: ${this.speed}x`,1200); },
+};
+window.SIM_CTRL = SIM_CTRL;
+
+/* ── CANVAS ALGORITHM OVERLAY SYSTEM ── */
+/**
+ * Vẽ overlay thuật toán trực tiếp lên canvas game.
+ * Dùng semi-transparent cells màu khác nhau để minh họa.
+ */
+const CanvasOverlay = {
+  _canvas: null,
+  _ctx: null,
+  _layers: {},        // name → {cells:[{x,y,color,alpha}], label}
+  _visible: new Set(),
+
+  _getCtx(){
+    if(!this._canvas){
+      this._canvas = document.getElementById('game-canvas')
+                  || document.querySelector('canvas');
+    }
+    if(!this._canvas) return null;
+    if(!this._ctx) this._ctx = this._canvas.getContext('2d');
+    return this._ctx;
+  },
+
+  /** Đăng ký một layer mới */
+  setLayer(name, cells, label=''){
+    this._layers[name]={ cells, label };
+    if(this._visible.has(name)) this._drawAll();
+  },
+
+  /** Toggle hiển thị một layer */
+  toggle(name){
+    if(this._visible.has(name)) this._visible.delete(name);
+    else this._visible.add(name);
+    this._drawAll();
+    showHudMsg(`${name} overlay: ${this._visible.has(name)?'ON':'OFF'}`,1500);
+  },
+
+  /** Vẽ tất cả layer đang hiển thị */
+  _drawAll(){
+    const ctx=this._getCtx();
+    if(!ctx||typeof CFG==='undefined') return;
+    const cs=CFG.CELL??16; // cell size pixels
+    ctx.save();
+    for(const name of this._visible){
+      const layer=this._layers[name];
+      if(!layer) continue;
+      for(const c of layer.cells){
+        ctx.globalAlpha = c.alpha??0.35;
+        ctx.fillStyle   = c.color??'#ff0';
+        ctx.fillRect(c.x*cs, c.y*cs, cs, cs);
+        if(c.text){
+          ctx.globalAlpha=0.85;
+          ctx.fillStyle='#fff';
+          ctx.font=`${Math.max(8,cs*0.4)}px monospace`;
+          ctx.fillText(c.text, c.x*cs+1, c.y*cs+cs*0.7);
+        }
+      }
+    }
+    ctx.restore();
+  },
+
+  /** Chạy sau mỗi frame (hook vào requestAnimationFrame) */
+  hookFrame(){
+    if(this._visible.size>0) this._drawAll();
+  },
+};
+window.CanvasOverlay = CanvasOverlay;
+
+/* Hook vào game loop: gọi CanvasOverlay.hookFrame() sau render */
+(function hookGameLoop(){
+  const origRAF = window.requestAnimationFrame.bind(window);
+  window.requestAnimationFrame = function(cb){
+    return origRAF(function(t){
+      cb(t);
+      CanvasOverlay.hookFrame();
+    });
+  };
+})();
+
+/* ── BFS WAVE OVERLAY ── */
+window.showBFSOverlay = function(){
+  if(typeof GS==='undefined'||!GS.grid) return;
+  const ai=GS.players?.find(p=>p.isBot);
+  const target=GS.treasure;
+  if(!ai) return;
+  const W=CFG.W,H=CFG.H,grid=GS.grid;
+  const dist=new Int32Array(W*H).fill(-1);
+  const q=[]; dist[ai.y*W+ai.x]=0; q.push([ai.x,ai.y]);
+  const dirs=[[0,-1],[0,1],[-1,0],[1,0]];
+  let head=0,maxD=0;
+  while(head<q.length){
+    const[cx,cy]=q[head++];
+    const d=dist[cy*W+cx];
+    if(d>maxD)maxD=d;
+    for(const[dx,dy]of dirs){
+      const nx=cx+dx,ny=cy+dy;
+      if(nx<0||nx>=W||ny<0||ny>=H)continue;
+      if(grid[ny*W+nx]===CFG.T_WALL)continue;
+      if(dist[ny*W+nx]!==-1)continue;
+      dist[ny*W+nx]=d+1; q.push([nx,ny]);
+    }
+  }
+  const cells=[];
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    if(dist[y*W+x]<0)continue;
+    const t=dist[y*W+x]/maxD;
+    // Gradient: xanh (gần AI) → đỏ (xa)
+    const r=Math.round(t*220),g=Math.round((1-t)*200),b=50;
+    cells.push({x,y,color:`rgb(${r},${g},${b})`,alpha:0.3,
+                text:dist[y*W+x]<=9?dist[y*W+x]:''});
+  }
+  CanvasOverlay.setLayer('BFS',cells,'BFS Wave');
+  CanvasOverlay.toggle('BFS');
+  ALGO_LOG.bfs(ai.x,ai.y,target?.x??0,target?.y??0,null);
+  showHudMsg('BFS wave overlay (distance map)',1800);
+};
+
+/* ── A* OPEN/CLOSED OVERLAY ── */
+window.showAStarOverlay = function(){
+  if(typeof GS==='undefined'||!GS.grid) return;
+  const ai=GS.players?.find(p=>p.isBot);
+  const target=GS.treasure;
+  if(!ai||!target) return;
+  const W=CFG.W,H=CFG.H,grid=GS.grid;
+  // Run A* and collect open/closed cells
+  const open=new Map(),closed=new Set();
+  const g=new Float32Array(W*H).fill(Infinity);
+  const f=new Float32Array(W*H).fill(Infinity);
+  const mdist=(ax,ay,bx,by)=>Math.abs(ax-bx)+Math.abs(ay-by);
+  const start=ai.y*W+ai.x, goal=target.y*W+target.x;
+  g[start]=0; f[start]=mdist(ai.x,ai.y,target.x,target.y);
+  const pq=[[f[start],ai.x,ai.y]]; // [f,x,y]
+  const dirs=[[0,-1],[0,1],[-1,0],[1,0]];
+  let iters=0;
+  while(pq.length&&iters++<2000){
+    pq.sort((a,b)=>a[0]-b[0]);
+    const[,cx,cy]=pq.shift();
+    const ci=cy*W+cx;
+    if(ci===goal)break;
+    closed.add(ci);
+    for(const[dx,dy]of dirs){
+      const nx=cx+dx,ny=cy+dy;
+      if(nx<0||nx>=W||ny<0||ny>=H)continue;
+      if(grid[ny*W+nx]===CFG.T_WALL)continue;
+      const ni=ny*W+nx;
+      if(closed.has(ni))continue;
+      const ng=g[ci]+1;
+      if(ng<g[ni]){
+        g[ni]=ng; f[ni]=ng+mdist(nx,ny,target.x,target.y);
+        open.set(ni,{x:nx,y:ny,gv:ng,hv:f[ni]-ng,fv:f[ni]});
+        pq.push([f[ni],nx,ny]);
+      }
+    }
+  }
+  const cells=[];
+  for(const[idx,info]of open){
+    cells.push({x:info.x,y:info.y,color:'#4af',alpha:0.35});
+  }
+  for(const idx of closed){
+    cells.push({x:idx%W,y:Math.floor(idx/W),color:'#f84',alpha:0.25});
+  }
+  CanvasOverlay.setLayer('ASTAR',cells,'A* Open(blue)/Closed(orange)');
+  CanvasOverlay.toggle('ASTAR');
+  ALGO_LOG.astar(ai.x,ai.y,target.x,target.y,null,open.size);
+  showHudMsg('A* overlay: blue=open, orange=closed',2000);
+};
+
+/* ── DFS MAZE ORDER OVERLAY ── */
+window.showDFSOverlay = function(){
+  if(typeof GS==='undefined'||!GS.grid) return;
+  const W=CFG.W,H=CFG.H,grid=GS.grid;
+  const cells=[];
+  // Hiển thị walls = grey, floors = gradient by position (simulate carve order)
+  let floorIdx=0, totalFloors=0;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++)
+    if(grid[y*W+x]!==CFG.T_WALL) totalFloors++;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    if(grid[y*W+x]===CFG.T_WALL) continue;
+    const t=floorIdx++/totalFloors;
+    // DFS-like spiral gradient: zig-zag r/g
+    const r=Math.round(50+t*180),g=Math.round((1-t)*220),b=Math.round(t*120);
+    cells.push({x,y,color:`rgb(${r},${g},${b})`,alpha:0.28});
+  }
+  CanvasOverlay.setLayer('DFS',cells,'DFS Maze Structure');
+  CanvasOverlay.toggle('DFS');
+  showHudMsg('DFS overlay: maze floor structure',1800);
+};
+
+/* ── DIJKSTRA COST OVERLAY ── */
+window.showDijkstraOverlay = function(){
+  if(typeof GS==='undefined'||!GS.grid) return;
+  const ai=GS.players?.find(p=>p.isBot);
+  const target=GS.treasure;
+  if(!ai) return;
+  const W=CFG.W,H=CFG.H,grid=GS.grid;
+  const cost=new Float32Array(W*H).fill(Infinity);
+  const q=[[0,ai.x,ai.y]]; cost[ai.y*W+ai.x]=0;
+  const dirs=[[0,-1],[0,1],[-1,0],[1,0]];
+  let head=0, maxCost=0;
+  // Risk cost: near monsters = high cost
+  function riskAt(x,y){
+    let r=1;
+    for(const m of GS.monsters||[]){
+      const d=Math.abs(x-m.x)+Math.abs(y-m.y);
+      if(d<3)r+=10-d*3;
+    }
+    return r;
+  }
+  while(head<q.length){
+    q.sort((a,b)=>a[0]-b[0]);
+    const[c,cx,cy]=q[head++];
+    if(c>cost[cy*W+cx])continue;
+    for(const[dx,dy]of dirs){
+      const nx=cx+dx,ny=cy+dy;
+      if(nx<0||nx>=W||ny<0||ny>=H)continue;
+      if(grid[ny*W+nx]===CFG.T_WALL)continue;
+      const nc=c+riskAt(nx,ny);
+      const ni=ny*W+nx;
+      if(nc<cost[ni]){ cost[ni]=nc; q.push([nc,nx,ny]); if(nc>maxCost)maxCost=nc; }
+    }
+  }
+  const cells=[];
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    if(cost[y*W+x]===Infinity)continue;
+    const t=Math.min(1,cost[y*W+x]/Math.max(1,maxCost));
+    const r=Math.round(t*255),g=Math.round((1-t)*180),b=50;
+    cells.push({x,y,color:`rgb(${r},${g},${b})`,alpha:0.32});
+  }
+  CanvasOverlay.setLayer('DIJKSTRA',cells,'Dijkstra Risk Cost');
+  CanvasOverlay.toggle('DIJKSTRA');
+  ALGO_LOG.dijkstra(ai.x,ai.y,target?.x??0,target?.y??0,null,0,'safe');
+  showHudMsg('Dijkstra overlay: green=safe, red=high risk',2000);
+};
+
+/* ── CSP STATUS OVERLAY ── */
+window.showCSPOverlay = function(){
+  if(typeof GS==='undefined'||!GS.grid) return;
+  // Hiển thị: traps=red, monsters=orange, quizzes=yellow, safe=green (CSP domains)
+  const cells=[];
+  const W=CFG.W;
+  for(const m of GS.monsters||[])
+    cells.push({x:m.x,y:m.y,color:'#f60',alpha:0.5});
+  for(const t of GS.traps||[])
+    cells.push({x:t.x,y:t.y,color:'#f00',alpha:0.5});
+  for(const q2 of GS.quizzes||GS.quizCells||[])
+    cells.push({x:q2.x,y:q2.y,color:'#ff0',alpha:0.4});
+  CanvasOverlay.setLayer('CSP',cells,'CSP Constraint Placement');
+  CanvasOverlay.toggle('CSP');
+  ALGO_LOG.csp('active',(GS.monsters?.length||0)+(GS.traps?.length||0),0,
+    (GS.monsters?.length||0)+(GS.traps?.length||0));
+  showHudMsg('CSP: red=trap, orange=monster, yellow=quiz',2000);
+};
+
+/* ── MINIMAX SUMMARY PANEL (Y key) ── */
+(function setupMinimaxPanel(){
+  const p=document.createElement('div');
+  p.id='mm-panel';
+  p.style.cssText=[
+    'display:none;position:fixed;top:50%;right:10px;transform:translateY(-50%);',
+    'background:rgba(5,12,28,.97);border:1px solid #f8f;border-radius:10px;',
+    'padding:14px;min-width:260px;max-width:340px;z-index:9997;',
+    'color:#fdf;font-family:monospace;font-size:.73rem;max-height:440px;overflow-y:auto'
+  ].join('');
+  p.innerHTML=`
+    <div style="font-weight:bold;color:#f8f;margin-bottom:8px">🌳 Minimax Summary (Y)</div>
+    <div id="mm-body">Nhấn Y trong game để cập nhật.</div>`;
+  document.body.appendChild(p);
+
+  window.showMinimaxPanel=function(){
+    const body=document.getElementById('mm-body');
+    if(!body)return;
+    const r=aiDecisionFull();
+    if(!r||!r.minimax){ body.textContent='Chạy AI mode để có dữ liệu.'; return; }
+    const mm=r.minimax;
+    const logs=(MATCH_LOGGER.algoLogs['MINIMAX']||[]).slice(-5).reverse();
+    body.innerHTML=`
+      <table style="width:100%;border-collapse:collapse;font-size:.7rem;margin-bottom:8px">
+        <tr><td style="color:#f8f">Best Action</td><td><b>${mm.action}</b></td></tr>
+        <tr><td style="color:#f8f">Root Value</td><td>${typeof mm.value==='number'?mm.value.toFixed(4):mm.value}</td></tr>
+        <tr><td style="color:#f8f">Depth</td><td>${r.minimax.nodesSearched>0?'searched':'-'}</td></tr>
+        <tr><td style="color:#f8f">Nodes Expanded</td><td>${mm.nodesSearched}</td></tr>
+        <tr><td style="color:#f8f">Pruned (α-β)</td><td>${mm.pruned}</td></tr>
+        <tr><td style="color:#f8f">Top-K filter</td><td>4 actions/player, 3 actions/AI</td></tr>
+      </table>
+      <div style="color:#fa8;margin-bottom:4px">Objective: ${r.objective?.goal??'-'}</div>
+      <div style="color:#888;font-size:.65rem">
+        Phase: ${GameState.captureFromGS().phase} |
+        EU=${r.matrix?.selected?.expectedUtility??0}
+      </div>
+      ${logs.length?`
+      <div style="margin-top:8px;color:#f8f;font-size:.66rem">Recent Minimax Logs:</div>
+      ${logs.map(e=>`<div style="color:#aaa;font-size:.63rem;border-bottom:1px solid #2224;padding:1px 0">
+        depth=${e.depth} nodes=${e.nodesSearched} pruned=${e.pruned}
+        best=${e.bestAction} val=${typeof e.bestVal==='number'?e.bestVal.toFixed(3):'-'}
+      </div>`).join('')}`:''}
+    `;
+  };
+
+  // Auto-refresh khi mở
+  setInterval(()=>{
+    const panel=document.getElementById('mm-panel');
+    if(panel&&panel.style.display!=='none') window.showMinimaxPanel();
+  },2500);
+})();
+
+/* ================================================================
+   ██████  PHASE 3 – FINALIZED HOTKEY MAP §11
+   Chuẩn hóa hoàn toàn, giải quyết xung đột từ Phase 1+2
+   ================================================================ */
+
+(function setupHotkeysPhase3(){
+  /* --- Final mapping (không conflict):
+     H   = Help overlay
+     Tab = Debug panel (existing)
+     L   = Log panel
+     K   = Leaderboard (thay vì R)
+     M   = Decision Matrix
+     T   = Transition Matrix (thay N bởi T)
+     U   = Utility panel
+     Y   = Minimax panel
+     X   = Export logs (thay Ctrl+E)
+     P   = Probability console
+     F1  = AI Decision console
+
+     Algorithm toggles:
+     D   = DFS overlay
+     B   = BFS overlay
+     J   = Dijkstra overlay (A bị conflict — dùng J=Dijkstra)
+     S   = CSP overlay
+     G   = Graph Coloring (existing)
+     C   = Choke/Tarjan (existing)
+     I   = Influence Map (existing)
+     F2  = A* overlay
+     F   = (no conflict) → A* overlay với F
+     Ctrl+M = Minimax toggle
+
+     Simulation:
+     Space = pause/resume
+     [     = slow down
+     ]     = speed up
+     Ctrl+R = reset ranking
+  --- */
+
+  document.addEventListener('keydown',e=>{
+    if(['INPUT','TEXTAREA'].includes(e.target?.tagName)) return;
+    const k=e.key;
+
+    /* Simulation controls */
+    if(k===' '&&!e.ctrlKey){ e.preventDefault(); SIM_CTRL.pause(); return; }
+    if(k==='['){ SIM_CTRL.slower(); return; }
+    if(k===']'){ SIM_CTRL.faster(); return; }
+
+    /* Panel toggles */
+    if(k==='k'||k==='K'){
+      const p=document.getElementById('ranking-panel');
+      if(!p)return;
+      if(p.style.display==='none') window.showRankingPanel();
+      else p.style.display='none';
+      return;
+    }
+    if(k==='t'||k==='T'){
+      const p=document.getElementById('tm-panel');
+      if(!p)return;
+      if(p.style.display==='none'){p.style.display='block';window.showTransitionMatrix();}
+      else p.style.display='none';
+      return;
+    }
+    if(k==='y'||k==='Y'){
+      const p=document.getElementById('mm-panel');
+      if(!p)return;
+      if(p.style.display==='none'){p.style.display='block';window.showMinimaxPanel();}
+      else p.style.display='none';
+      return;
+    }
+    if(k==='x'||k==='X'){
+      e.preventDefault();
+      MATCH_LOGGER.exportJSON();
+      showHudMsg('📥 Logs exported!',2000);
+      return;
+    }
+
+    /* Algorithm canvas overlays */
+    if(k==='d'||k==='D'){ window.showDFSOverlay();      return; }
+    if(k==='b'||k==='B'){ window.showBFSOverlay();      return; }
+    if(k==='j'||k==='J'){ window.showDijkstraOverlay(); return; }
+    if(k==='s'||k==='S'){ window.showCSPOverlay();      return; }
+    // F2 or '2' for A* (avoid conflict with '2'=BFS toggle from phase 2)
+    if(k==='F2'){          window.showAStarOverlay();    return; }
+  });
+
+  console.info([
+    '[Phase 3 Hotkeys] FINAL MAP:',
+    'H=Help | K=Leaderboard | U=Utility | M=DMatrix | T=TransMatrix | Y=Minimax | L=Log | A=AlgoLog',
+    'X=Export | P=Probs | F1=AIReport | Space=Pause | [=Slow | ]=Fast',
+    'D=DFS | B=BFS | F2=A* | J=Dijkstra | S=CSP | G=GraphColor | C=Choke | I=InfluMap',
+  ].join('\n'));
+})();
+
+/* Update Help Overlay with final hotkey map */
+(function updateHelpOverlay(){
+  // Thay thế nội dung help-overlay-ext nếu đã tồn tại
+  const p=document.getElementById('help-overlay-ext');
+  if(!p) return;
+  const inner=p.querySelector('div');
+  if(!inner) return;
+  inner.innerHTML=`
+  <div style="display:flex;justify-content:space-between;margin-bottom:16px">
+    <h2 style="color:#4af;margin:0">⌨ Hotkey Reference – Maze Duel AI System (Final)</h2>
+    <button onclick="document.getElementById('help-overlay-ext').style.display='none'"
+      style="background:#333;border:none;color:#fff;padding:6px 14px;border-radius:6px;cursor:pointer">✕</button>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+    <div>
+      <h3 style="color:#fa8;margin:0 0 6px">UI Panels</h3>
+      <table style="font-size:.75rem;width:100%">
+        <tr><td style="color:#4af;width:80px">H</td><td>Help</td></tr>
+        <tr><td style="color:#4af">K</td><td>🏆 Leaderboard</td></tr>
+        <tr><td style="color:#4af">U</td><td>⚙ Utility panel</td></tr>
+        <tr><td style="color:#4af">M</td><td>📊 Decision Matrix</td></tr>
+        <tr><td style="color:#4af">T</td><td>🔄 Transition Matrix</td></tr>
+        <tr><td style="color:#4af">Y</td><td>🌳 Minimax panel</td></tr>
+        <tr><td style="color:#4af">L</td><td>📋 Log panel</td></tr>
+        <tr><td style="color:#4af">A</td><td>🔬 Algo log panel</td></tr>
+        <tr><td style="color:#4af">Tab</td><td>🐛 Debug panel</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3 style="color:#fa8;margin:0 0 6px">Algorithm Overlays (Canvas)</h3>
+      <table style="font-size:.75rem;width:100%">
+        <tr><td style="color:#6f6;width:80px">D</td><td>DFS maze structure</td></tr>
+        <tr><td style="color:#6f6">B</td><td>BFS wave/distance</td></tr>
+        <tr><td style="color:#6f6">F2</td><td>A* open/closed cells</td></tr>
+        <tr><td style="color:#6f6">J</td><td>Dijkstra risk cost</td></tr>
+        <tr><td style="color:#6f6">S</td><td>CSP placements</td></tr>
+        <tr><td style="color:#6f6">G</td><td>Graph Coloring</td></tr>
+        <tr><td style="color:#6f6">C</td><td>Choke/Tarjan AP</td></tr>
+        <tr><td style="color:#6f6">I</td><td>Influence Map</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3 style="color:#fa8;margin:0 0 6px">Actions & Simulation</h3>
+      <table style="font-size:.75rem;width:100%">
+        <tr><td style="color:#ff9;width:80px">Space</td><td>Pause/Resume</td></tr>
+        <tr><td style="color:#ff9">[</td><td>Slow down</td></tr>
+        <tr><td style="color:#ff9">]</td><td>Speed up</td></tr>
+        <tr><td style="color:#ff9">X</td><td>Export logs</td></tr>
+        <tr><td style="color:#ff9">P</td><td>Prob report (console)</td></tr>
+        <tr><td style="color:#ff9">F1</td><td>AI Decision (console)</td></tr>
+        <tr><td style="color:#ff9">Ctrl+R</td><td>Reset ranking</td></tr>
+      </table>
+      <h3 style="color:#fa8;margin:12px 0 6px">Console Commands</h3>
+      <div style="font-size:.68rem;color:#aaa;line-height:1.7">
+        <code>aiDecisionReport()</code><br>
+        <code>exportLogs()</code><br>
+        <code>probReport()</code><br>
+        <code>rankingReport()</code><br>
+        <code>algorithmLogReport()</code>
+      </div>
+    </div>
+  </div>
+  <div style="margin-top:12px;padding:8px;background:#0a1828;border-radius:6px;font-size:.68rem;color:#666">
+    <b style="color:#4af">Data Flow:</b>
+    GameLoop → GameState → ObjectiveSystem → UtilityEngine → DecisionMatrix
+    → MinimaxEngine → MatchLogger → TransitionMatrix → localStorage → RankingSystem
+  </div>`;
+})();
+
+console.info('[Phase 3] ✅ Canvas Overlays (D/B/F2/J/S) · Minimax Panel (Y) · SimCtrl (Space/[/]) · Final Hotkeys · Help updated.');
+console.info('[COMPLETE] Maze Duel AI System fully loaded. Press H for hotkey guide.');
 </script>
 </body>
 </html>
