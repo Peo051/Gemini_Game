@@ -10395,6 +10395,22 @@ function aiDecisionFull(){
     mmResult = _minimaxEngine.search(state, depth, weights);
   }catch(e){ console.warn('[aiDecisionFull] Minimax error:',e); }
 
+  ALGO_LOG.utility(
+    primary?.goal ?? 'UNKNOWN',
+    matrix.selected?.action ?? ACTION_TYPE.STAY,
+    matrix.selected?.utility ?? 0,
+    matrix.selected?.expectedUtility ?? 0
+  );
+  if (mmResult) {
+    ALGO_LOG.minimax(
+      depth,
+      mmResult.nodesSearched,
+      mmResult.pruned,
+      mmResult.value,
+      mmResult.action
+    );
+  }
+
   // 5. Chọn hành động cuối (ưu tiên minimax nếu hard)
   const finalAction = (GS.cpuDiff==='hard'&&mmResult)
     ? mmResult.action
@@ -10661,6 +10677,10 @@ console.info('Usage: aiDecisionReport() | exportLogs() | probReport() | rankingR
 
 
 const ALGO_LOG = {
+  /** DFS visualization/runtime */
+  dfs(sx,sy,cellCount){
+    MATCH_LOGGER.logAlgo('DFS',{from:{x:sx,y:sy},cells:cellCount??0});
+  },
   /** BFS: ghi sau mỗi lần gọi bfs() */
   bfs(sx,sy,tx,ty,result){
     MATCH_LOGGER.logAlgo('BFS',{
@@ -10711,6 +10731,15 @@ const ALGO_LOG = {
   /** Minimax */
   minimax(depth,nodes,pruned,bestVal,bestAction){
     MATCH_LOGGER.logAlgo('MINIMAX',{depth,nodesSearched:nodes,pruned,bestVal,bestAction});
+  },
+  /** Utility scoring summary */
+  utility(goal,selectedAction,totalUtility,expectedUtility){
+    MATCH_LOGGER.logAlgo('UTILITY',{
+      goal,
+      selectedAction,
+      totalUtility: +(totalUtility ?? 0).toFixed(4),
+      expectedUtility: +(expectedUtility ?? 0).toFixed(4),
+    });
   },
 };
 
@@ -10791,45 +10820,224 @@ window.ALGO_LOG = ALGO_LOG;
 
 const ALGO_SIM = {
   states: {
-    DFS:           {mode:'off', speed:1},
-    BFS:           {mode:'off', speed:1},
-    ASTAR:         {mode:'off', speed:1},
-    DIJKSTRA:      {mode:'off', speed:1},
-    CSP:           {mode:'off', speed:1},
-    GRAPH_COLORING:{mode:'off', speed:1},
-    TARJAN:        {mode:'off', speed:1},
-    INFLUENCE:     {mode:'off', speed:1},
-    UTILITY:       {mode:'off', speed:1},
-    MINIMAX:       {mode:'off', speed:1},
+    DFS:           {mode:'off', speed:1, paused:false, stepIndex:0, stepCells:null},
+    BFS:           {mode:'off', speed:1, paused:false, stepIndex:0, stepCells:null},
+    ASTAR:         {mode:'off', speed:1, paused:false, stepIndex:0, stepCells:null},
+    DIJKSTRA:      {mode:'off', speed:1, paused:false, stepIndex:0, stepCells:null},
+    CSP:           {mode:'off', speed:1, paused:false, stepIndex:0, stepCells:null},
+    GRAPH_COLORING:{mode:'off', speed:1, paused:false, stepIndex:0, stepCells:null},
+    TARJAN:        {mode:'off', speed:1, paused:false, stepIndex:0, stepCells:null},
+    INFLUENCE:     {mode:'off', speed:1, paused:false, stepIndex:0, stepCells:null},
+    UTILITY:       {mode:'off', speed:1, paused:false, stepIndex:0, stepCells:null},
+    MINIMAX:       {mode:'off', speed:1, paused:false, stepIndex:0, stepCells:null},
+  },
+
+  _canvasLayerByAlgo: {
+    DFS:'DFS', BFS:'BFS', ASTAR:'ASTAR', DIJKSTRA:'DIJKSTRA', CSP:'CSP'
+  },
+
+  _isCanvasAlgo(name){
+    return !!this._canvasLayerByAlgo[name];
+  },
+
+  _invokeVisualizer(name){
+    const map={
+      DFS: ()=>window.showDFSOverlay?.(),
+      BFS: ()=>window.showBFSOverlay?.(),
+      ASTAR: ()=>window.showAStarOverlay?.(),
+      DIJKSTRA: ()=>window.showDijkstraOverlay?.(),
+      CSP: ()=>window.showCSPOverlay?.(),
+      GRAPH_COLORING: ()=>{
+        const desired = true;
+        if (!!GS.graphColoring !== desired) toggleGraphColoring();
+      },
+      INFLUENCE: ()=>{
+        if(typeof INF_MAP!=='undefined') INF_MAP.debugOverlay = true;
+        updateAlgoHints?.();
+      },
+      TARJAN: ()=>{
+        if(typeof CHOKE_CACHE!=='undefined') CHOKE_CACHE.debugOverlay = true;
+        updateAlgoHints?.();
+      },
+      UTILITY: ()=>{
+        const p=document.getElementById('utility-panel');
+        if(p) p.style.display='block';
+        window.showUtilityPanel?.();
+      },
+      MINIMAX: ()=>{
+        const p=document.getElementById('mm-panel');
+        if(p) p.style.display='block';
+        window.showMinimaxPanel?.();
+      },
+    };
+    map[name]?.();
+  },
+
+  _ensureCanvasVisible(layerName, on){
+    if(!window.CanvasOverlay || !CanvasOverlay._visible) return;
+    const has = CanvasOverlay._visible.has(layerName);
+    if (on && !has) CanvasOverlay._visible.add(layerName);
+    if (!on && has) CanvasOverlay._visible.delete(layerName);
+  },
+
+  _applyOverlay(name, on){
+    const layer=this._canvasLayerByAlgo[name];
+    if(layer){
+      if(on){
+        this._invokeVisualizer(name);
+        this._ensureCanvasVisible(layer, true);
+      }else{
+        this._ensureCanvasVisible(layer, false);
+      }
+      return;
+    }
+
+    const map={
+      GRAPH_COLORING: ()=>{
+        if (!!GS.graphColoring !== !!on) toggleGraphColoring();
+      },
+      INFLUENCE: ()=>{
+        if(typeof INF_MAP!=='undefined') INF_MAP.debugOverlay = !!on;
+        updateAlgoHints?.();
+      },
+      TARJAN: ()=>{
+        if(typeof CHOKE_CACHE!=='undefined') CHOKE_CACHE.debugOverlay = !!on;
+        updateAlgoHints?.();
+      },
+      UTILITY: ()=>{
+        const p=document.getElementById('utility-panel');
+        if(p) p.style.display = on ? 'block' : 'none';
+        if(on) window.showUtilityPanel?.();
+      },
+      MINIMAX: ()=>{
+        const p=document.getElementById('mm-panel');
+        if(p) p.style.display = on ? 'block' : 'none';
+        if(on) window.showMinimaxPanel?.();
+      },
+    };
+    map[name]?.();
+  },
+
+  _captureStepCells(name){
+    const layerName=this._canvasLayerByAlgo[name];
+    if(!layerName || !window.CanvasOverlay) return;
+    const layer = CanvasOverlay._layers?.[layerName];
+    const s=this.states[name];
+    if(!layer || !s) return;
+    s.stepCells = (layer.cells||[]).slice();
+    s.stepIndex = 0;
+    if (s.stepCells.length) {
+      CanvasOverlay.setLayer(layerName, [], `${layer.label||layerName} [step]`);
+      this._ensureCanvasVisible(layerName, true);
+    }
+  },
+
+  _applyStepFrame(name, stepCount=1){
+    const s=this.states[name];
+    const layerName=this._canvasLayerByAlgo[name];
+    if(!s || !layerName || !s.stepCells) return;
+    s.stepIndex = Math.min(s.stepCells.length, s.stepIndex + Math.max(1,stepCount|0));
+    const subset=s.stepCells.slice(0,s.stepIndex);
+    CanvasOverlay.setLayer(layerName, subset, `${layerName} [step ${s.stepIndex}/${s.stepCells.length}]`);
+    this._ensureCanvasVisible(layerName, true);
   },
 
   toggle(name){
     const s=this.states[name];
     if(!s) return;
-    s.mode = s.mode==='off' ? 'result' : 'off';
-    this._applyOverlay(name, s.mode!=='off');
-    showHudMsg(`${name}: ${s.mode}`, 1500);
-    MATCH_LOGGER.logAlgo('SIM_TOGGLE',{algo:name,mode:s.mode});
+    const next = s.mode==='off' ? 'result' : (s.mode==='result' ? 'step' : 'off');
+    this.setMode(name, next);
   },
 
-  _applyOverlay(name, on){
-    // Map thuật toán → hàm toggle overlay hiện tại
-    const map={
-      GRAPH_COLORING: ()=>{ if(typeof toggleGraphColoring==='function') toggleGraphColoring(on); },
-      INFLUENCE:      ()=>{ if(typeof INF_MAP!=='undefined'){ INF_MAP.debugOverlay=on; }},
-      TARJAN:         ()=>{ if(typeof CHOKE_CACHE!=='undefined'){ CHOKE_CACHE.debugOverlay=on; }},
-    };
-    map[name]?.();
+  setMode(name, mode='result'){
+    const s=this.states[name];
+    if(!s) return;
+    s.mode = mode;
+    s.paused = false;
+    if(mode==='off'){
+      s.stepCells=null;
+      s.stepIndex=0;
+      this._applyOverlay(name,false);
+    } else if(mode==='result'){
+      s.stepCells=null;
+      s.stepIndex=0;
+      this._applyOverlay(name,true);
+      if(name==='UTILITY') window.showUtilityPanel?.();
+      if(name==='MINIMAX') window.showMinimaxPanel?.();
+    } else if(mode==='step'){
+      this._applyOverlay(name,true);
+      if(this._isCanvasAlgo(name)){
+        this._captureStepCells(name);
+        this._applyStepFrame(name,1);
+      }
+      if(name==='UTILITY') window.showUtilityPanel?.();
+      if(name==='MINIMAX') window.showMinimaxPanel?.();
+    }
+    showHudMsg(`${name}: ${s.mode}${s.paused?' (paused)':''}`, 1500);
+    MATCH_LOGGER.logAlgo('SIM_MODE',{algo:name,mode:s.mode});
+  },
+
+  pause(name){
+    const s=this.states[name];
+    if(!s || s.mode==='off') return;
+    s.paused=true;
+    MATCH_LOGGER.logAlgo('SIM_PAUSE',{algo:name,mode:s.mode});
+    showHudMsg(`${name}: pause`,1200);
+  },
+
+  resume(name){
+    const s=this.states[name];
+    if(!s || s.mode==='off') return;
+    s.paused=false;
+    MATCH_LOGGER.logAlgo('SIM_RESUME',{algo:name,mode:s.mode});
+    showHudMsg(`${name}: resume`,1200);
+  },
+
+  step(name, count=1){
+    const s=this.states[name];
+    if(!s || s.mode==='off') return;
+    if(s.mode!=='step'){
+      this.setMode(name,'step');
+    }
+    if(this._isCanvasAlgo(name)){
+      this._applyStepFrame(name, count);
+    }else if(name==='UTILITY'){
+      window.showUtilityPanel?.();
+    }else if(name==='MINIMAX'){
+      window.showMinimaxPanel?.();
+    }
+    MATCH_LOGGER.logAlgo('SIM_STEP',{algo:name,count,idx:s.stepIndex||0});
+  },
+
+  setAll(on){
+    const keys=Object.keys(this.states);
+    for(const k of keys){
+      this.setMode(k, on ? 'result' : 'off');
+    }
+  },
+
+  tick(){
+    for(const [name,s] of Object.entries(this.states)){
+      if(s.mode!=='step' || s.paused) continue;
+      const stepCount = Math.max(1, Math.round(s.speed || 1));
+      this.step(name, stepCount);
+      if(this._isCanvasAlgo(name) && s.stepCells && s.stepIndex >= s.stepCells.length){
+        s.paused = true;
+        MATCH_LOGGER.logAlgo('SIM_DONE',{algo:name,steps:s.stepIndex});
+      }
+    }
   },
 
   speedUp(name){
     const s=this.states[name];
     if(s) s.speed=Math.min(8,s.speed*2);
+    MATCH_LOGGER.logAlgo('SIM_SPEED',{algo:name,speed:s?.speed||1});
     showHudMsg(`${name} speed: ${s?.speed}x`,1200);
   },
   speedDown(name){
     const s=this.states[name];
     if(s) s.speed=Math.max(0.25,s.speed/2);
+    MATCH_LOGGER.logAlgo('SIM_SPEED',{algo:name,speed:s?.speed||1});
     showHudMsg(`${name} speed: ${s?.speed}x`,1200);
   },
 
@@ -10839,6 +11047,74 @@ const ALGO_SIM = {
 };
 
 window.ALGO_SIM = ALGO_SIM;
+setInterval(()=>{ window.ALGO_SIM?.tick?.(); }, 300);
+
+/* ── 0. ALGORITHM VISUALIZATION CONTROL PANEL ── */
+(function setupAlgoVizControlPanel(){
+  const p=document.createElement('div');
+  p.id='algo-viz-panel';
+  p.style.cssText=[
+    'display:none;position:fixed;right:10px;bottom:10px;',
+    'background:rgba(5,12,28,.96);border:1px solid #6cf;border-radius:10px;',
+    'padding:10px;min-width:280px;z-index:9997;color:#def;font-family:monospace;font-size:.68rem'
+  ].join('');
+  p.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <b style="color:#6cf">🧠 Algorithm Viz Control</b>
+      <button id="av-close" style="background:#223;border:1px solid #466;color:#def;border-radius:5px;cursor:pointer">✕</button>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <label style="color:#9bc">Algo</label>
+      <select id="av-algo" style="flex:1;background:#112;border:1px solid #345;color:#def;border-radius:4px">
+        <option>DFS</option><option>BFS</option><option>ASTAR</option><option>DIJKSTRA</option>
+        <option>CSP</option><option>GRAPH_COLORING</option><option>TARJAN</option><option>INFLUENCE</option>
+        <option>UTILITY</option><option>MINIMAX</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+      <button id="av-toggle"  style="background:#223;border:1px solid #466;color:#def;border-radius:5px;cursor:pointer">Toggle</button>
+      <button id="av-result"  style="background:#223;border:1px solid #466;color:#def;border-radius:5px;cursor:pointer">Result</button>
+      <button id="av-step"    style="background:#223;border:1px solid #466;color:#def;border-radius:5px;cursor:pointer">Step Mode</button>
+      <button id="av-step-once" style="background:#223;border:1px solid #466;color:#def;border-radius:5px;cursor:pointer">Step +1</button>
+      <button id="av-pause"   style="background:#223;border:1px solid #466;color:#def;border-radius:5px;cursor:pointer">Pause</button>
+      <button id="av-resume"  style="background:#223;border:1px solid #466;color:#def;border-radius:5px;cursor:pointer">Resume</button>
+      <button id="av-speed-down" style="background:#223;border:1px solid #466;color:#def;border-radius:5px;cursor:pointer">Speed -</button>
+      <button id="av-speed-up" style="background:#223;border:1px solid #466;color:#def;border-radius:5px;cursor:pointer">Speed +</button>
+    </div>
+    <div id="av-state" style="color:#9bc">State: --</div>
+  `;
+  document.body.appendChild(p);
+
+  const select=()=>document.getElementById('av-algo')?.value || 'BFS';
+  const renderState=()=>{
+    const a=select();
+    const s=ALGO_SIM.states[a];
+    const el=document.getElementById('av-state');
+    if(!el||!s) return;
+    const logs=(MATCH_LOGGER.algoLogs[a]||[]).length;
+    el.textContent=`State: mode=${s.mode} paused=${!!s.paused} speed=${s.speed}x step=${s.stepIndex||0} logs=${logs}`;
+  };
+
+  document.getElementById('av-close').onclick=()=>{ p.style.display='none'; };
+  document.getElementById('av-toggle').onclick=()=>{ ALGO_SIM.toggle(select()); renderState(); };
+  document.getElementById('av-result').onclick=()=>{ ALGO_SIM.setMode(select(),'result'); renderState(); };
+  document.getElementById('av-step').onclick=()=>{ ALGO_SIM.setMode(select(),'step'); renderState(); };
+  document.getElementById('av-step-once').onclick=()=>{ ALGO_SIM.step(select(),1); renderState(); };
+  document.getElementById('av-pause').onclick=()=>{ ALGO_SIM.pause(select()); renderState(); };
+  document.getElementById('av-resume').onclick=()=>{ ALGO_SIM.resume(select()); renderState(); };
+  document.getElementById('av-speed-up').onclick=()=>{ ALGO_SIM.speedUp(select()); renderState(); };
+  document.getElementById('av-speed-down').onclick=()=>{ ALGO_SIM.speedDown(select()); renderState(); };
+  document.getElementById('av-algo').onchange=renderState;
+
+  setInterval(()=>{
+    if (p.style.display !== 'none') renderState();
+  }, 900);
+
+  window.toggleAlgoVizPanel=function(){
+    p.style.display = p.style.display==='none' ? 'block' : 'none';
+    renderState();
+  };
+})();
 
 /* ================================================================
    ██████  EXTENDED DEBUG PANELS §L
@@ -11395,6 +11671,8 @@ window.showDFSOverlay = function(){
   }
   CanvasOverlay.setLayer('DFS',cells,'DFS Maze Structure');
   CanvasOverlay.toggle('DFS');
+  const ai=GS.players?.find(p=>p.isBot)||GS.players?.[0]||{x:0,y:0};
+  ALGO_LOG.dfs(ai.x, ai.y, cells.length);
   showHudMsg('DFS overlay: maze floor structure',1800);
 };
 
@@ -11703,6 +11981,36 @@ console.info('[COMPLETE] Maze Duel AI System fully loaded. Press H for hotkey gu
     persistence: ['localStorage-transition-matrix', 'localStorage-ranking', 'json-export'],
   };
 
+  window.IT_GAME_MODEL = {
+    hierarchy: window.SYSTEM_HIERARCHY,
+    objectiveSystem: {
+      primarySelector: 'OBJECTIVE_SYSTEM.primary(state)',
+      dynamicWeights: 'ObjectiveSystem.weightsFor(goal, phase)',
+      goals: ['COLLECT_TREASURE','RETURN_BASE','CONTEST_ENEMY','SURVIVE','ZONE_CONTROL']
+    },
+    stateModel: {
+      fullState: '<positions, holder, scores, phase, hazards, choke, influence>',
+      actionSet: Object.values(window.ACTION_TYPE || {}),
+      transition: ['TransitionModel.apply', 'TRANSITION_MATRIX.record', 'PROB_ESTIMATOR.estimate']
+    },
+    decision: {
+      utility: 'UTILITY_ENGINE.evaluate',
+      matrix: 'DECISION_MATRIX.build',
+      minimax: 'MinimaxEngine.search(alpha-beta)'
+    },
+    explainablePanels: ['utility-panel','dm-panel','tm-panel','mm-panel','prob-panel','algo-log-panel'],
+    rankingAndPersistence: ['RANKING_SYSTEM', 'MATCH_LOGGER.exportJSON', 'exportDebugSnapshot', 'localStorage']
+  };
+
+  window.DECISION_EXPLOSION_CONTROL = {
+    strategy: ['Top-K candidate actions', 'Depth limit by difficulty', 'Alpha-Beta pruning', 'Equivalent-state abstraction'],
+    defaults: {
+      topKAI: 4,
+      topKOpponent: 3,
+      minimaxDepth: { easy: 1, normal: 2, hard: 3 }
+    }
+  };
+
   window.DEBUG_STATE = window.DEBUG_STATE || {
     panels: {
       leaderboard: false,
@@ -11882,6 +12190,9 @@ console.info('[COMPLETE] Maze Duel AI System fully loaded. Press H for hotkey gu
   function setAllAlgorithmOverlays(on){
     DEBUG_STATE.simulation.allOverlaysOn = !!on;
     try {
+      if (window.ALGO_SIM && typeof ALGO_SIM.setAll === 'function') {
+        ALGO_SIM.setAll(!!on);
+      }
       // Canvas overlays
       if (window.CanvasOverlay && CanvasOverlay._visible) {
         if (!on) {
@@ -11962,13 +12273,14 @@ console.info('[COMPLETE] Maze Duel AI System fully loaded. Press H for hotkey gu
       return true;
     }
     if (key === 'p') { toggleProbabilityPanel(); return true; }
+    if (key === 'f3') { window.toggleAlgoVizPanel?.(); return true; }
     if (key === 'f4') {
       if (typeof window.toggleAcademicReportPanel === 'function') window.toggleAcademicReportPanel();
       return true;
     }
 
-    // Simulation reset (xung đột với R skill push: dùng Alt+R cho reset simulation)
-    if (key === 'r' && e.altKey) { SYSTEM_CONTROL.resetSimulation(); return true; }
+    // Simulation reset
+    if (key === 'r') { SYSTEM_CONTROL.resetSimulation(); return true; }
 
     // Gameplay compatibility remap:
     // Space giờ dành cho pause theo chuẩn report => đặt bẫy chuyển sang Z.
@@ -11976,18 +12288,17 @@ console.info('[COMPLETE] Maze Duel AI System fully loaded. Press H for hotkey gu
     // Kỹ năng push đổi sang V để không xung đột Alt+R reset simulation.
     if (key === 'v') { requestUseSkill('push'); return true; }
 
-    // Algorithm overlays
-    // Các phím xung đột WASD dùng Alt+key để không phá điều khiển di chuyển.
-    if (key === 'd' && e.altKey) { if (typeof window.showDFSOverlay === 'function') window.showDFSOverlay(); return true; }
-    if (key === 'b') { if (typeof window.showBFSOverlay === 'function') window.showBFSOverlay(); return true; }
-    if (key === 'a' && e.altKey) { if (typeof window.showAStarOverlay === 'function') window.showAStarOverlay(); return true; }
-    if (key === 'j') { if (typeof window.showDijkstraOverlay === 'function') window.showDijkstraOverlay(); return true; }
-    if (key === 's' && e.altKey) { if (typeof window.showCSPOverlay === 'function') window.showCSPOverlay(); return true; }
-    if (key === 'g') { toggleGraphColoring(); return true; }
-    if (key === 'c') { toggleChokeOverlay(); return true; }
-    if (key === 'i') { toggleInfluenceOverlay(); return true; }
-    if (key === 'u' && e.altKey) { const show = togglePanel('utility-panel'); if (show && window.showUtilityPanel) window.showUtilityPanel(); return true; }
-    if (key === 'y' && e.altKey) { const show = togglePanel('mm-panel'); if (show && window.showMinimaxPanel) window.showMinimaxPanel(); return true; }
+    // Algorithm overlays - exact hotkey mapping requested
+    if (key === 'd') { ALGO_SIM?.toggle?.('DFS'); return true; }
+    if (key === 'b') { ALGO_SIM?.toggle?.('BFS'); return true; }
+    if (key === 'a') { ALGO_SIM?.toggle?.('ASTAR'); return true; }
+    if (key === 'j') { ALGO_SIM?.toggle?.('DIJKSTRA'); return true; }
+    if (key === 's') { ALGO_SIM?.toggle?.('CSP'); return true; }
+    if (key === 'g') { ALGO_SIM?.toggle?.('GRAPH_COLORING'); return true; }
+    if (key === 'c') { ALGO_SIM?.toggle?.('TARJAN'); return true; }
+    if (key === 'i') { ALGO_SIM?.toggle?.('INFLUENCE'); return true; }
+    if (key === 'u') { ALGO_SIM?.toggle?.('UTILITY'); return true; }
+    if (key === 'y') { ALGO_SIM?.toggle?.('MINIMAX'); return true; }
 
     return false;
   }
@@ -12038,10 +12349,26 @@ console.info('[COMPLETE] Maze Duel AI System fully loaded. Press H for hotkey gu
 
   console.info([
     '[Phase 4] ✅ Unified control layer loaded',
-    'General: H Tab L O Space [ ] X K M T U Y P F4 Alt+R(reset)',
-    'Algo: Alt+D BFS Alt+A J Alt+S G C I Alt+U Alt+Y',
+    'General: H Tab L O Space [ ] R X K M T P F3 F4',
+    'Algo: D B A J S G C I U Y',
     'Gameplay remap: Z=trap, V=push-skill'
   ].join('\n'));
+
+  // Đồng bộ help overlay theo mapping cuối cùng (append block, không phá layout cũ).
+  setTimeout(()=>{
+    const host = document.getElementById('help-overlay-ext') || document.getElementById('help-overlay');
+    if (!host || host.querySelector('.phase4-hotkey-map')) return;
+    const box = document.createElement('div');
+    box.className = 'phase4-hotkey-map';
+    box.style.cssText = 'margin-top:12px;padding:10px;border:1px solid #2f4f7f;border-radius:8px;background:#0a1828;color:#cfe;font-family:monospace;font-size:.72rem';
+    box.innerHTML = [
+      '<div style="font-weight:bold;color:#8fc;margin-bottom:6px">Final Hotkey Map (IT-Adversarial)</div>',
+      '<div>General: H, Tab, L, O, Space, [, ], R, X, K, M, T, P, F3, F4</div>',
+      '<div>Algorithms: D(DFS), B(BFS), A(A*), J(Dijkstra), S(CSP), G(Graph), C(Tarjan), I(Influence), U(Utility), Y(Minimax)</div>',
+      '<div style="color:#8ab;margin-top:4px">Mỗi thuật toán: off → result → step (nhấn lặp phím). Chi tiết step/pause/speed: F3 mở Algorithm Viz Control.</div>'
+    ].join('');
+    (host.firstElementChild || host).appendChild(box);
+  }, 0);
 })();
 
 /* ================================================================
