@@ -232,7 +232,7 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
 #debug-panel {
   display:none; position:fixed; top:10px; right:10px; background:#000c; border:1px solid #0f8;
   border-radius:8px; padding:10px; font-size:.72rem; color:#0f8; font-family:monospace;
-  z-index:999; min-width:200px; max-height:80vh; overflow-y:auto; pointer-events:none;
+  z-index:999; min-width:200px; max-height:88vh; overflow-y:auto; pointer-events:auto;
 }
 #debug-panel.show { display:block; }
 
@@ -842,6 +842,8 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   <div id="dbg-traps">Traps: --</div>
   <div id="dbg-round">Round: --</div>
   <div id="dbg-seq">Seq: --</div>
+  <div style="margin-top:6px;border-top:1px solid #4af4;padding-top:6px;color:#7cf;">🧠 ALGO SUMMARY (TOP)</div>
+  <div id="dbg-algo-top" style="font-size:.62rem;color:#bde;line-height:1.45;">--</div>
   <div style="margin-top:6px;border-top:1px solid #0f84;padding-top:6px;color:#0fc;">📊 GRAPH COLORING</div>
   <div id="dbg-gc-colors">Màu: --</div>
   <div id="dbg-gc-nodes">Nodes: --</div>
@@ -886,6 +888,10 @@ button:disabled { background:#333; color:#666; cursor:not-allowed; transform:non
   <div id="dbg-tactical-ctx" style="font-size:.65rem;color:#cf9;">Tactical ctx: --</div>
   <div id="dbg-tactical-action" style="font-size:.65rem;color:#afc;">Tactical best: --</div>
   <div id="dbg-tactical-nodes" style="font-size:.63rem;color:#9d9;">Tactical nodes: --</div>
+  <div id="dbg-algo-all-wrap" style="margin-top:6px;border-top:1px solid #4af6;padding-top:6px;color:#7cf;">
+    🧠 ALL ALGORITHMS TAB [F6]
+    <div id="dbg-algo-all" style="max-height:170px;overflow-y:auto;font-size:.62rem;color:#bde;margin-top:4px;">Algorithm stats: --</div>
+  </div>
   <div style="margin-top:6px;color:#ff0;">[G] Graph overlay | [I] Influence overlay | [C] Choke overlay</div>
   <div style="font-size:.62rem;color:#ffd;">Console: aiDecisionReport() | tacticalSearchReport() | monsterAssignmentReport() | mapBalanceReport()</div>
 </div>
@@ -8691,6 +8697,95 @@ function updateDebugPanel(){
     }
     dbgZone.textContent = `Zone: owned=P${z.capturedBy >= 0 ? z.capturedBy+1 : '-'} capturing=P${z.capturingBy >= 0 ? z.capturingBy+1 : '-'} pct=${pct}%`;
   }
+
+  const algoTopEl = document.getElementById('dbg-algo-top');
+  if (algoTopEl) {
+    const topRows = [
+      {name:'D', sim:'DFS', key:'DFS'},
+      {name:'B', sim:'BFS', key:'BFS'},
+      {name:'A', sim:'ASTAR', key:'ASTAR'},
+      {name:'J', sim:'DIJKSTRA', key:'DIJKSTRA'},
+      {name:'S', sim:'CSP', key:'CSP'},
+      {name:'G', sim:'GRAPH_COLORING', key:'GRAPH_COLOR'},
+      {name:'C', sim:'TARJAN', key:'TARJAN'},
+      {name:'I', sim:'INFLUENCE', key:'INFLUENCE_MAP'},
+      {name:'U', sim:'UTILITY', key:'UTILITY'},
+      {name:'Y', sim:'MINIMAX', key:'MINIMAX'},
+    ];
+    const parts = topRows.map(r => {
+      const s = window.ALGO_SIM?.states?.[r.sim] || {};
+      const logs = window.MATCH_LOGGER?.algoLogs?.[r.key] || [];
+      const e = logs.length ? logs[logs.length-1] : null;
+      let m = '--';
+      if (e) {
+        if (r.key === 'BFS' || r.key === 'ASTAR' || r.key === 'DIJKSTRA') m = `p${e.pathLen ?? '-'}`;
+        else if (r.key === 'GRAPH_COLOR') m = `c${e.numColors ?? '-'}`;
+        else if (r.key === 'TARJAN') m = `ap${e.articulationPoints ?? '-'}`;
+        else if (r.key === 'INFLUENCE_MAP') m = `d${e.maxDanger ?? '-'}`;
+        else if (r.key === 'UTILITY') m = `eu${e.expectedUtility ?? '-'}`;
+        else if (r.key === 'MINIMAX') m = `n${e.nodesSearched ?? '-'}`;
+        else if (r.key === 'CSP') m = `pl${e.placed ?? '-'}`;
+        else if (r.key === 'DFS') m = `c${e.cells ?? '-'}`;
+      }
+      return `${r.name}:${s.mode || 'off'} ${m}`;
+    });
+    algoTopEl.textContent = parts.join(' | ');
+  }
+
+  const algoAllEl = document.getElementById('dbg-algo-all');
+  if (algoAllEl) {
+    const algoRows = [
+      {label:'DFS',             simKey:'DFS',            logKey:'DFS'},
+      {label:'BFS',             simKey:'BFS',            logKey:'BFS'},
+      {label:'A*',              simKey:'ASTAR',          logKey:'ASTAR'},
+      {label:'Dijkstra',        simKey:'DIJKSTRA',       logKey:'DIJKSTRA'},
+      {label:'CSP',             simKey:'CSP',            logKey:'CSP'},
+      {label:'Graph Coloring',  simKey:'GRAPH_COLORING', logKey:'GRAPH_COLOR'},
+      {label:'Tarjan',          simKey:'TARJAN',         logKey:'TARJAN'},
+      {label:'Influence Map',   simKey:'INFLUENCE',      logKey:'INFLUENCE_MAP'},
+      {label:'Utility',         simKey:'UTILITY',        logKey:'UTILITY'},
+      {label:'Minimax',         simKey:'MINIMAX',        logKey:'MINIMAX'},
+    ];
+
+    const summarize = (key, e) => {
+      if (!e) return 'no-log';
+      if (key === 'BFS' || key === 'ASTAR' || key === 'DIJKSTRA') {
+        return `found=${e.found?'1':'0'} path=${e.pathLen ?? '-'}${e.pathCost!=null?` cost=${e.pathCost}`:''}`;
+      }
+      if (key === 'DFS') return `cells=${e.cells ?? '-'} from=${e.from?`(${e.from.x},${e.from.y})`:'--'}`;
+      if (key === 'CSP') return `status=${e.status ?? '--'} placed=${e.placed ?? '--'} c=${e.constraintCount ?? '--'}`;
+      if (key === 'GRAPH_COLOR') return `colors=${e.numColors ?? '--'} nodes=${e.nodeCount ?? '--'}`;
+      if (key === 'TARJAN') return `ap=${e.articulationPoints ?? '--'} br=${e.bridges ?? '--'}`;
+      if (key === 'INFLUENCE_MAP') return `danger=${e.maxDanger ?? '--'} opp=${e.maxOpportunity ?? '--'}`;
+      if (key === 'UTILITY') return `goal=${e.goal ?? '--'} a=${e.selectedAction ?? '--'} eu=${e.expectedUtility ?? '--'}`;
+      if (key === 'MINIMAX') return `d=${e.depth ?? '--'} n=${e.nodesSearched ?? '--'} p=${e.pruned ?? '--'} a=${e.bestAction ?? '--'}`;
+      return 'ok';
+    };
+
+    const getOverlayState = (simKey) => {
+      if (simKey === 'GRAPH_COLORING') return GS.graphColoring ? 'ON' : 'OFF';
+      if (simKey === 'INFLUENCE') return INF_MAP?.debugOverlay ? 'ON' : 'OFF';
+      if (simKey === 'TARJAN') return CHOKE_CACHE?.debugOverlay ? 'ON' : 'OFF';
+      const canvasMap = { DFS:'DFS', BFS:'BFS', ASTAR:'ASTAR', DIJKSTRA:'DIJKSTRA', CSP:'CSP' };
+      const layer = canvasMap[simKey];
+      if (!layer) return '--';
+      return (window.CanvasOverlay && CanvasOverlay._visible?.has(layer)) ? 'ON' : 'OFF';
+    };
+
+    const lines = algoRows.map(row => {
+      const sim = window.ALGO_SIM?.states?.[row.simKey] || {};
+      const list = window.MATCH_LOGGER?.algoLogs?.[row.logKey] || [];
+      const last = list.length ? list[list.length - 1] : null;
+      const ov = getOverlayState(row.simKey);
+      const mode = sim.mode || 'off';
+      const spd = sim.speed || 1;
+      const paused = sim.paused ? 'P' : '-';
+      const step = sim.stepIndex ?? 0;
+      const metric = summarize(row.logKey, last);
+      return `<div><span style="color:#7cf">${row.label.padEnd(14,' ')}</span> ov=${ov} mode=${mode} ${paused} spd=${spd}x step=${step} log=${list.length} | ${sanitize(String(metric))}</div>`;
+    });
+    algoAllEl.innerHTML = lines.join('');
+  }
 }
 function toggleGraphColoring(){
   GS.graphColoring=!GS.graphColoring;
@@ -12274,6 +12369,14 @@ console.info('[COMPLETE] Maze Duel AI System fully loaded. Press H for hotkey gu
     }
     if (key === 'p') { toggleProbabilityPanel(); return true; }
     if (key === 'f3') { window.toggleAlgoVizPanel?.(); return true; }
+    if (key === 'f6') {
+      const w = document.getElementById('dbg-algo-all-wrap');
+      if (w) {
+        w.style.display = (w.style.display === 'none') ? 'block' : 'none';
+        showHudMsg(w.style.display === 'none' ? 'All Algorithms TAB: OFF' : 'All Algorithms TAB: ON', 1200);
+      }
+      return true;
+    }
     if (key === 'f4') {
       if (typeof window.toggleAcademicReportPanel === 'function') window.toggleAcademicReportPanel();
       return true;
