@@ -11962,6 +11962,10 @@ console.info('[COMPLETE] Maze Duel AI System fully loaded. Press H for hotkey gu
       return true;
     }
     if (key === 'p') { toggleProbabilityPanel(); return true; }
+    if (key === 'f4') {
+      if (typeof window.toggleAcademicReportPanel === 'function') window.toggleAcademicReportPanel();
+      return true;
+    }
 
     // Simulation reset (xung đột với R skill push: dùng Alt+R cho reset simulation)
     if (key === 'r' && e.altKey) { SYSTEM_CONTROL.resetSimulation(); return true; }
@@ -12034,10 +12038,291 @@ console.info('[COMPLETE] Maze Duel AI System fully loaded. Press H for hotkey gu
 
   console.info([
     '[Phase 4] ✅ Unified control layer loaded',
-    'General: H Tab L O Space [ ] X K M T U Y P Alt+R(reset)',
+    'General: H Tab L O Space [ ] X K M T U Y P F4 Alt+R(reset)',
     'Algo: Alt+D BFS Alt+A J Alt+S G C I Alt+U Alt+Y',
     'Gameplay remap: Z=trap, V=push-skill'
   ].join('\n'));
+})();
+
+/* ================================================================
+   ██████  PHASE 5 – ACADEMIC REPORT AS CODE (A/B/C)
+   Mục tiêu: chuyển toàn bộ nội dung báo cáo thành dữ liệu có cấu trúc,
+   có thể hiển thị, truy vấn và export trực tiếp từ game.
+   ================================================================ */
+
+(function phase5AcademicReport(){
+  if (window.__phase5AcademicReportLoaded) return;
+  window.__phase5AcademicReportLoaded = true;
+
+  const REPORT = {
+    meta: {
+      project: 'Maze Duel - Adversarial Maze AI',
+      version: '1.0',
+      exportedAt: () => new Date().toISOString(),
+      language: 'vi-VN',
+      context: 'IT Thesis / System Design',
+    },
+
+    partA: {
+      title: 'Phần A - Bản viết học thuật chi tiết',
+      chapters: [
+        {
+          id: 'A1',
+          title: 'Phân cấp hệ thống game',
+          content: [
+            'Hệ thống được tổ chức theo mô hình nhiều tầng: Presentation, Input/Control, Gameplay Logic, AI Decision, Algorithm Services, Logging/Analytics, Persistence/Ranking.',
+            'Luồng dữ liệu chính: gameplay event -> logger -> transition statistics -> probability estimation -> expected utility -> decision policy.',
+            'Tầng thuật toán cung cấp dịch vụ chuyên biệt: DFS/BFS/A*/Dijkstra/CSP/Graph Coloring/Tarjan/Influence/Minimax.',
+            'Tầng explainability tái sử dụng dữ liệu utility breakdown, transition probability và minimax summary để hiển thị lý do chọn hành động.'
+          ],
+          formulas: [
+            'DataFlow = Gameplay_t -> Log_t -> Stats_t -> Prob_t -> Decision_{t+1}'
+          ],
+          conclusion: 'Phân tầng giúp hệ thống đồng thời đáp ứng realtime và khả năng giải thích theo chuẩn kỹ thuật IT.'
+        },
+        {
+          id: 'A2',
+          title: 'Mục tiêu của game theo chuẩn IT',
+          content: [
+            'Mục tiêu tổng quát: tối ưu xác suất thắng trong môi trường đối kháng có thông tin trạng thái động.',
+            'Mục tiêu người chơi: tối đa điểm thông qua chu trình treasure -> return base trong khi giảm rủi ro contest/hazard.',
+            'Mục tiêu AI: tối đa expected utility đa tiêu chí theo phase và theo chiến lược đối thủ.',
+            'Mục tiêu ngắn hạn: hành động bước kế tiếp tối ưu; trung hạn: kiểm soát choke/zone; dài hạn: tối ưu win rate và ranking.'
+          ],
+          formulas: [
+            'Objective_t = argmax_{policy} WinProbability(policy | S_t, OpponentPolicy)'
+          ],
+          conclusion: 'Bài toán cốt lõi là adversarial decision optimization, không phải shortest-path thuần túy.'
+        },
+        {
+          id: 'A3',
+          title: 'Mô hình trạng thái và ma trận chuyển trạng thái',
+          content: [
+            'Trạng thái đầy đủ gồm vị trí player/AI, treasure holder, score, hazard, choke/zone, influence summary và phase trận.',
+            'Trạng thái trừu tượng dùng để giảm bùng nổ không gian: khoảng cách lượng tử hóa, owner zone, holder state, phase.',
+            'Transition matrix học từ log: đếm N(s,a,s\') và N_success(s,a).',
+            'Mô hình hỗn hợp deterministic + stochastic: deterministic cho luật cơ bản, stochastic cho contest/risk outcomes.'
+          ],
+          formulas: [
+            'S_t = <P_t, E_t, T_t, H_t, Z_t, C_t, R_t, M_t>',
+            'A(S_t) = {a_1,...,a_n}',
+            'P(S_{t+1}|S_t,a_t)',
+            'T^{(a)}_{ij} = P(S_{t+1}=s_j | S_t=s_i, a_t=a)'
+          ],
+          conclusion: 'Mô hình trạng thái + transition là nền tảng định lượng cho decision matrix và minimax.'
+        },
+        {
+          id: 'A4',
+          title: 'Cây quyết định và hàm mục tiêu đa tiêu chí',
+          content: [
+            'Decision tree mô hình hóa chuỗi hành động AI và phản ứng đối thủ theo nhiều ply.',
+            'Minimax + alpha-beta dùng để tìm hành động robust trước phản ứng bất lợi.',
+            'Hàm utility đa tiêu chí gồm: treasure, base, safety, contest, danger, choke, score, survival, tactical advantage.',
+            'Trọng số thay đổi theo phase: early ưu tiên tìm objective, late ưu tiên chuyển hóa điểm và an toàn.'
+          ],
+          formulas: [
+            'U(S_t,a) = Σ_i w_i * f_i(S_t,a)',
+            'EU(S_t,a) = P_succ * U_succ + (1-P_succ) * U_fail'
+          ],
+          conclusion: 'Pathfinding chỉ là lớp con; quyết định đối kháng phải dựa trên utility đa tiêu chí và lookahead.'
+        },
+        {
+          id: 'A5',
+          title: 'Ma trận quyết định và kiểm soát bùng nổ',
+          content: [
+            'Decision matrix: hàng = action ứng viên, cột = tiêu chí chuẩn hóa, cột cuối = expected utility.',
+            'Top-k filtering trước minimax giúp giảm branching factor hiệu quả.',
+            'Bùng nổ tổ hợp được khống chế bởi depth limit, alpha-beta pruning, equivalent-state grouping và log-based action pruning.',
+            'Độ phức tạp lý thuyết: O(b^d), thực tế giảm còn O(k^d), k << b sau heuristic ranking.'
+          ],
+          formulas: [
+            'Score(a) = Σ_i w_i * x_i\'',
+            'N_raw ≈ O(b^d), N_reduced ≈ O(k^d)'
+          ],
+          conclusion: 'Kết hợp heuristic + utility + minimax là lựa chọn thực dụng cho đối kháng realtime.'
+        },
+        {
+          id: 'A6',
+          title: 'Xác suất học từ log và ranking system',
+          content: [
+            'Log lưu state-action-next_state, success/failure, contest outcome, survival outcome và match summary.',
+            'Probability estimator tính P(success|s,a), P(block|s,a), P(capture|s,a) và expected utility.',
+            'Ranking hỗ trợ ELO-like + weighted tactical score, đồng bộ từ log trận đấu.',
+            'Làm sạch dữ liệu ranking qua validate range, anti-duplicate, schema version và consistency checks.'
+          ],
+          formulas: [
+            'P̂_succ(s,a) = (N_succ + α) / (N + 2α)',
+            'P̂(s\'|s,a) = N(s,a,s\') / Σ_j N(s,a,s_j)',
+            'R_new = R_old + K * (S - E)'
+          ],
+          conclusion: 'Log analytics tạo vòng phản hồi giúp AI thích nghi và ranking phản ánh đúng hiệu năng.'
+        }
+      ]
+    },
+
+    partB: {
+      title: 'Phần B - Bản rút gọn cho slide',
+      bullets: [
+        'Bài toán: adversarial maze decision optimization dưới ràng buộc realtime.',
+        'Mô hình: S_t, A(S_t), P(S_{t+1}|S_t,a_t), utility đa tiêu chí, expected utility từ log.',
+        'Pipeline: Objective -> Candidate Actions -> Decision Matrix -> Top-k -> Minimax -> Final Action.',
+        'Kiểm soát độ phức tạp: depth limit, alpha-beta, top-k, equivalent states.',
+        'Explainability: utility panel, transition matrix panel, minimax summary, algorithm overlays.',
+        'Ranking: ELO-like + tactical score, cập nhật từ match logs.'
+      ]
+    },
+
+    partC: {
+      title: 'Phần C - Checklist implementation',
+      items: [
+        'Chuẩn hóa state encoder full + abstract, định danh action-space theo context.',
+        'Hoàn thiện transition logging N(s,a,s\') và success/failure tagging.',
+        'Chuẩn hóa utility factors + dynamic weights theo phase và tactical context.',
+        'Áp dụng decision matrix top-k trước minimax, log đầy đủ node expanded/pruned.',
+        'Bổ sung thuật toán telemetry cho DFS/BFS/A*/Dijkstra/CSP/Graph/Tarjan/Influence.',
+        'Xây panel explainable AI đồng nhất (objective, selected action, rejected actions).',
+        'Tích hợp probability estimator vào expected utility ngay trong vòng lặp quyết định.',
+        'Đồng bộ ranking với log, bổ sung anti-corruption và schema versioning.',
+        'Cài export artifact: logs JSON, debug snapshot, report markdown.',
+        'Thiết lập benchmark thực nghiệm: latency, win rate, pruning ratio, stability.'
+      ]
+    }
+  };
+
+  window.ACADEMIC_REPORT = REPORT;
+
+  function reportToMarkdown(){
+    const out = [];
+    out.push(`# ${REPORT.meta.project} - Academic Report Package`);
+    out.push('');
+    out.push(`- Generated at: ${REPORT.meta.exportedAt()}`);
+    out.push(`- Context: ${REPORT.meta.context}`);
+    out.push('');
+
+    out.push(`## ${REPORT.partA.title}`);
+    out.push('');
+    for (const ch of REPORT.partA.chapters) {
+      out.push(`### ${ch.id}. ${ch.title}`);
+      for (const c of ch.content) out.push(`- ${c}`);
+      if (ch.formulas?.length) {
+        out.push('');
+        out.push('Công thức:');
+        for (const f of ch.formulas) out.push(`- ${f}`);
+      }
+      out.push('');
+      out.push(`Kết luận: ${ch.conclusion}`);
+      out.push('');
+    }
+
+    out.push(`## ${REPORT.partB.title}`);
+    out.push('');
+    for (const b of REPORT.partB.bullets) out.push(`- ${b}`);
+    out.push('');
+
+    out.push(`## ${REPORT.partC.title}`);
+    out.push('');
+    REPORT.partC.items.forEach((it, idx) => out.push(`${idx + 1}. ${it}`));
+    out.push('');
+    return out.join('\n');
+  }
+
+  window.exportAcademicReportJSON = function(){
+    const payload = {
+      meta: { ...REPORT.meta, exportedAt: REPORT.meta.exportedAt() },
+      partA: REPORT.partA,
+      partB: REPORT.partB,
+      partC: REPORT.partC,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `mazeDuel_academic_report_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showHudMsg('📘 Export Academic Report JSON', 1500);
+  };
+
+  window.exportAcademicReportMarkdown = function(){
+    const md = reportToMarkdown();
+    const blob = new Blob([md], { type: 'text/markdown' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `mazeDuel_academic_report_${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showHudMsg('📝 Export Academic Report Markdown', 1500);
+  };
+
+  function ensureAcademicPanel(){
+    if (document.getElementById('academic-report-panel')) return;
+    const p = document.createElement('div');
+    p.id = 'academic-report-panel';
+    p.style.cssText = [
+      'display:none;position:fixed;top:8px;left:8px;right:8px;bottom:8px;',
+      'background:rgba(5,12,28,.98);border:1px solid #7aa6ff;border-radius:12px;',
+      'z-index:10001;color:#dfe8ff;font-family:monospace;padding:12px;overflow:hidden;'
+    ].join('');
+    p.innerHTML = [
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">',
+      '<b style="color:#9fc2ff">📚 Academic Report Engine (F4)</b>',
+      '<div style="display:flex;gap:6px">',
+      '<button id="ar-tab-a" style="background:#223;border:1px solid #557;color:#def;border-radius:6px;cursor:pointer">Part A</button>',
+      '<button id="ar-tab-b" style="background:#223;border:1px solid #557;color:#def;border-radius:6px;cursor:pointer">Part B</button>',
+      '<button id="ar-tab-c" style="background:#223;border:1px solid #557;color:#def;border-radius:6px;cursor:pointer">Part C</button>',
+      '<button id="ar-export-md" style="background:#243;border:1px solid #586;color:#def;border-radius:6px;cursor:pointer">Export MD</button>',
+      '<button id="ar-export-json" style="background:#243;border:1px solid #586;color:#def;border-radius:6px;cursor:pointer">Export JSON</button>',
+      '<button id="ar-close" style="background:#332;border:1px solid #766;color:#fed;border-radius:6px;cursor:pointer">✕</button>',
+      '</div>',
+      '</div>',
+      '<div id="ar-body" style="height:calc(100% - 36px);overflow:auto;border-top:1px solid #2a3a58;padding-top:8px"></div>'
+    ].join('');
+    document.body.appendChild(p);
+
+    const body = document.getElementById('ar-body');
+    const renderA = () => {
+      body.innerHTML = REPORT.partA.chapters.map(ch => {
+        const content = ch.content.map(c => `<li>${sanitize(c)}</li>`).join('');
+        const fml = (ch.formulas || []).map(f => `<div style="color:#9fe;font-size:.68rem;margin-left:8px">${sanitize(f)}</div>`).join('');
+        return [
+          `<div style="margin-bottom:14px">`,
+          `<div style="color:#9fc2ff;font-weight:bold">${sanitize(ch.id)}. ${sanitize(ch.title)}</div>`,
+          `<ul style="margin:6px 0 6px 18px">${content}</ul>`,
+          fml,
+          `<div style="color:#9fb79f;font-size:.68rem;margin-top:4px"><b>Kết luận:</b> ${sanitize(ch.conclusion)}</div>`,
+          `</div>`
+        ].join('');
+      }).join('');
+    };
+    const renderB = () => {
+      body.innerHTML = [
+        `<div style="color:#9fc2ff;font-weight:bold;margin-bottom:8px">${sanitize(REPORT.partB.title)}</div>`,
+        `<ol style="margin-left:18px">${REPORT.partB.bullets.map(b => `<li style="margin-bottom:6px">${sanitize(b)}</li>`).join('')}</ol>`
+      ].join('');
+    };
+    const renderC = () => {
+      body.innerHTML = [
+        `<div style="color:#9fc2ff;font-weight:bold;margin-bottom:8px">${sanitize(REPORT.partC.title)}</div>`,
+        `<ol style="margin-left:18px">${REPORT.partC.items.map(it => `<li style="margin-bottom:6px">${sanitize(it)}</li>`).join('')}</ol>`
+      ].join('');
+    };
+
+    document.getElementById('ar-tab-a').onclick = renderA;
+    document.getElementById('ar-tab-b').onclick = renderB;
+    document.getElementById('ar-tab-c').onclick = renderC;
+    document.getElementById('ar-export-md').onclick = window.exportAcademicReportMarkdown;
+    document.getElementById('ar-export-json').onclick = window.exportAcademicReportJSON;
+    document.getElementById('ar-close').onclick = () => { p.style.display = 'none'; };
+    renderA();
+  }
+  ensureAcademicPanel();
+
+  window.toggleAcademicReportPanel = function(){
+    const p = document.getElementById('academic-report-panel');
+    if (!p) return;
+    p.style.display = (p.style.display === 'none') ? 'block' : 'none';
+  };
+
+  console.info('[Phase 5] ✅ Academic Report as Code loaded (F4 to open panel).');
 })();
 </script>
 </body>
