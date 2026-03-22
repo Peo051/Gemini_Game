@@ -11679,6 +11679,366 @@ window.showCSPOverlay = function(){
 
 console.info('[Phase 3] ✅ Canvas Overlays (D/B/F2/J/S) · Minimax Panel (Y) · SimCtrl (Space/[/]) · Final Hotkeys · Help updated.');
 console.info('[COMPLETE] Maze Duel AI System fully loaded. Press H for hotkey guide.');
+
+/* ================================================================
+   ██████  PHASE 4 – STABILIZATION & UNIFIED IT-ACADEMIC CONTROLS
+   Mục tiêu:
+   1) Chuẩn hóa lớp điều khiển (hotkey/panel/overlay/simulation)
+   2) Thêm probability panel (log-based probability estimation)
+   3) Giải quyết xung đột phím gameplay vs debug bằng capture-phase router
+   ================================================================ */
+
+(function phase4Stabilization(){
+  if (window.__phase4Stabilized) return;
+  window.__phase4Stabilized = true;
+
+  // Hệ phân tầng để dùng trong báo cáo đồ án (system hierarchy)
+  window.SYSTEM_HIERARCHY = {
+    presentation: ['canvas', 'hud', 'debug-panel', 'algorithm-overlays', 'ranking-panel', 'decision-matrix', 'transition-matrix', 'utility-panel', 'minimax-panel', 'probability-panel'],
+    inputControl: ['hotkey-router', 'simulation-control', 'panel-toggle', 'export-log'],
+    gameplayLogic: ['maze', 'players', 'treasure', 'hazards', 'score', 'round-manager'],
+    aiDecision: ['objective-system', 'candidate-actions', 'utility-engine', 'decision-matrix', 'minimax', 'expected-utility'],
+    algorithm: ['dfs', 'bfs', 'astar', 'dijkstra', 'csp', 'graph-coloring', 'tarjan', 'influence-map', 'transition-model'],
+    loggingAnalytics: ['match-logger', 'algorithm-logger', 'decision-log', 'transition-log', 'probability-estimator', 'ranking-log'],
+    persistence: ['localStorage-transition-matrix', 'localStorage-ranking', 'json-export'],
+  };
+
+  window.DEBUG_STATE = window.DEBUG_STATE || {
+    panels: {
+      leaderboard: false,
+      utility: false,
+      decisionMatrix: false,
+      transitionMatrix: false,
+      minimax: false,
+      algoLog: false,
+      matchLog: false,
+      probability: false,
+    },
+    overlays: {
+      dfs: false,
+      bfs: false,
+      astar: false,
+      dijkstra: false,
+      csp: false,
+      graphColoring: false,
+      tarjan: false,
+      influence: false,
+      utility: false,
+      minimax: false,
+    },
+    simulation: {
+      paused: false,
+      speed: 1,
+      allOverlaysOn: false,
+    }
+  };
+
+  const SYSTEM_CONTROL = {
+    get paused(){ return !!DEBUG_STATE.simulation.paused; },
+    set paused(v){ DEBUG_STATE.simulation.paused = !!v; },
+    get speed(){ return DEBUG_STATE.simulation.speed || 1; },
+    set speed(v){ DEBUG_STATE.simulation.speed = Math.max(0.25, Math.min(4, +v)); },
+
+    togglePause(){
+      this.paused = !this.paused;
+      showHudMsg(this.paused ? '⏸ Tạm dừng mô phỏng' : '▶ Tiếp tục mô phỏng', 1300);
+    },
+
+    speedUp(){
+      this.speed = +(this.speed * 1.25).toFixed(2);
+      this.applySpeed();
+      showHudMsg(`⚡ Tốc độ mô phỏng: ${this.speed}x`, 1200);
+    },
+
+    speedDown(){
+      this.speed = +(this.speed / 1.25).toFixed(2);
+      this.applySpeed();
+      showHudMsg(`🐢 Tốc độ mô phỏng: ${this.speed}x`, 1200);
+    },
+
+    applySpeed(){
+      if (!GS.running) return;
+      if (GS._monsterInterval) clearInterval(GS._monsterInterval);
+      if (GS._cpuInterval) clearInterval(GS._cpuInterval);
+      if (GS._trapInterval) clearInterval(GS._trapInterval);
+      if (GS._energyInterval) clearInterval(GS._energyInterval);
+      const spd = Math.max(0.25, this.speed || 1);
+      GS._monsterInterval = setInterval(moveMonsters, Math.max(40, Math.floor(CFG.MONSTER_MOVE_MS / spd)));
+      GS._cpuInterval     = setInterval(cpuTick, Math.max(40, Math.floor(getCpuMs() / spd)));
+      GS._trapInterval    = setInterval(checkTraps, Math.max(80, Math.floor(500 / spd)));
+      GS._energyInterval  = setInterval(energyRegenTick, Math.max(20, Math.floor(CFG.ENERGY_REGEN_INTERVAL_MS / spd)));
+    },
+
+    resetSimulation(){
+      if (!GS.running) {
+        showHudMsg('Không có mô phỏng đang chạy để reset', 1200);
+        return;
+      }
+      if (GS.mode === 'online' && !GS.isHost) {
+        showHudMsg('Chỉ host có thể reset mô phỏng online', 1400);
+        return;
+      }
+      try {
+        const keepRound = GS.round;
+        const seed = Date.now() & 0xFFFFFF;
+        initRound(seed, null, keepRound > 1);
+        DEBUG_STATE.simulation.paused = false;
+        showHudMsg('🔄 Đã reset mô phỏng ván hiện tại', 1500);
+      } catch (e) {
+        showHudMsg('Reset mô phỏng thất bại', 1500);
+      }
+    }
+  };
+  window.SYSTEM_CONTROL = SYSTEM_CONTROL;
+
+  // Guard wrappers để pause có hiệu lực đồng nhất trên gameplay loop.
+  const _wrapIfFn = (name, wrapper) => {
+    const fn = window[name];
+    if (typeof fn !== 'function') return;
+    if (fn.__phase4Wrapped) return;
+    const wrapped = wrapper(fn);
+    wrapped.__phase4Wrapped = true;
+    window[name] = wrapped;
+  };
+
+  _wrapIfFn('moveMonsters', (orig)=>function(...args){ if (SYSTEM_CONTROL.paused) return; return orig.apply(this,args); });
+  _wrapIfFn('cpuTick', (orig)=>function(...args){ if (SYSTEM_CONTROL.paused) return; return orig.apply(this,args); });
+  _wrapIfFn('checkTraps', (orig)=>function(...args){ if (SYSTEM_CONTROL.paused) return; return orig.apply(this,args); });
+  _wrapIfFn('energyRegenTick', (orig)=>function(...args){ if (SYSTEM_CONTROL.paused) return; return orig.apply(this,args); });
+  _wrapIfFn('tryMove', (orig)=>function(...args){ if (SYSTEM_CONTROL.paused) return; return orig.apply(this,args); });
+  _wrapIfFn('requestUseSkill', (orig)=>function(...args){ if (SYSTEM_CONTROL.paused) return false; return orig.apply(this,args); });
+  _wrapIfFn('requestPlaceTrap', (orig)=>function(...args){ if (SYSTEM_CONTROL.paused) return; return orig.apply(this,args); });
+  _wrapIfFn('requestInteract', (orig)=>function(...args){ if (SYSTEM_CONTROL.paused) return false; return orig.apply(this,args); });
+
+  _wrapIfFn('beginGameplay', (orig)=>function(...args){
+    const r = orig.apply(this,args);
+    setTimeout(()=>SYSTEM_CONTROL.applySpeed(), 0);
+    return r;
+  });
+
+  function togglePanel(panelId, onShow){
+    const el = document.getElementById(panelId);
+    if (!el) return false;
+    const show = typeof onShow === 'boolean' ? onShow : (el.style.display === 'none');
+    el.style.display = show ? 'block' : 'none';
+    return show;
+  }
+
+  function toggleProbabilityPanel(){
+    const shown = togglePanel('prob-panel');
+    DEBUG_STATE.panels.probability = shown;
+    if (shown && typeof window.renderProbabilityPanel === 'function') {
+      window.renderProbabilityPanel();
+    }
+  }
+
+  function ensureProbabilityPanel(){
+    if (document.getElementById('prob-panel')) return;
+    const p = document.createElement('div');
+    p.id = 'prob-panel';
+    p.style.cssText = [
+      'display:none;position:fixed;top:66px;right:10px;',
+      'background:rgba(5,12,28,.97);border:1px solid #8ff;border-radius:10px;',
+      'padding:12px;min-width:320px;max-width:470px;max-height:380px;overflow-y:auto;',
+      'z-index:9998;color:#dff;font-family:monospace;font-size:.72rem'
+    ].join('');
+    p.innerHTML = [
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">',
+      '<b style="color:#8ff">📈 Probability From Logs (P)</b>',
+      '<button onclick="document.getElementById(\'prob-panel\').style.display=\'none\'" style="background:#223;border:1px solid #466;color:#def;border-radius:6px;cursor:pointer">✕</button>',
+      '</div>',
+      '<div id="prob-body" style="font-size:.68rem;color:#cdf">No data</div>'
+    ].join('');
+    document.body.appendChild(p);
+
+    window.renderProbabilityPanel = function(){
+      const body = document.getElementById('prob-body');
+      if (!body) return;
+      if (typeof GameState === 'undefined' || typeof PROB_ESTIMATOR === 'undefined') {
+        body.textContent = 'Probability engine chưa sẵn sàng';
+        return;
+      }
+      const s = GameState.captureFromGS();
+      const rows = PROB_ESTIMATOR.allActionProbs(s)
+        .sort((a,b)=>b.pSuccess-a.pSuccess);
+      body.innerHTML = [
+        `<div style="color:#9ab;margin-bottom:6px">State key: ${TRANSITION_MATRIX._ks ? TRANSITION_MATRIX._ks(s) : 'N/A'}</div>`,
+        '<table style="width:100%;border-collapse:collapse">',
+        '<tr style="color:#8ff;border-bottom:1px solid #8ff4"><th>Action</th><th>P(success)</th><th>Obs</th></tr>',
+        rows.map(r=>`<tr style="border-bottom:1px solid #2336"><td>${r.action}</td><td>${r.pSuccess}</td><td>${r.observations}</td></tr>`).join(''),
+        '</table>'
+      ].join('');
+    };
+
+    setInterval(()=>{
+      const panel = document.getElementById('prob-panel');
+      if (panel && panel.style.display !== 'none' && typeof window.renderProbabilityPanel === 'function') {
+        window.renderProbabilityPanel();
+      }
+    }, 2500);
+  }
+  ensureProbabilityPanel();
+
+  function setAllAlgorithmOverlays(on){
+    DEBUG_STATE.simulation.allOverlaysOn = !!on;
+    try {
+      // Canvas overlays
+      if (window.CanvasOverlay && CanvasOverlay._visible) {
+        if (!on) {
+          CanvasOverlay._visible.clear();
+        } else {
+          ['DFS','BFS','ASTAR','DIJKSTRA','CSP'].forEach(name => {
+            if (!CanvasOverlay._visible.has(name)) {
+              if (name === 'DFS' && typeof window.showDFSOverlay === 'function') window.showDFSOverlay();
+              if (name === 'BFS' && typeof window.showBFSOverlay === 'function') window.showBFSOverlay();
+              if (name === 'ASTAR' && typeof window.showAStarOverlay === 'function') window.showAStarOverlay();
+              if (name === 'DIJKSTRA' && typeof window.showDijkstraOverlay === 'function') window.showDijkstraOverlay();
+              if (name === 'CSP' && typeof window.showCSPOverlay === 'function') window.showCSPOverlay();
+            }
+          });
+        }
+      }
+      // Existing overlays G/I/C
+      if (typeof INF_MAP !== 'undefined' && !!INF_MAP.debugOverlay !== !!on) toggleInfluenceOverlay();
+      if (typeof CHOKE_CACHE !== 'undefined' && !!CHOKE_CACHE.debugOverlay !== !!on) toggleChokeOverlay();
+      if (!!GS.graphColoring !== !!on) toggleGraphColoring();
+      showHudMsg(on ? '🧠 Bật tất cả thuật toán' : '🧠 Tắt tất cả thuật toán', 1500);
+    } catch (e) {}
+  }
+
+  function toggleByFinalKey(k, e){
+    const key = (k || '').toLowerCase();
+
+    // General controls
+    if (key === 'h') {
+      if (typeof window.showHelpOverlay === 'function') window.showHelpOverlay();
+      else toggleHelp();
+      return true;
+    }
+    if (key === 'tab') { toggleDebug(); return true; }
+    if (key === 'l') {
+      const show = togglePanel('log-panel');
+      DEBUG_STATE.panels.matchLog = show;
+      if (show && typeof window.refreshLogPanel === 'function') window.refreshLogPanel();
+      return true;
+    }
+    if (key === 'o') { setAllAlgorithmOverlays(!DEBUG_STATE.simulation.allOverlaysOn); return true; }
+    if (key === ' ') { SYSTEM_CONTROL.togglePause(); return true; }
+    if (key === '[') { SYSTEM_CONTROL.speedDown(); return true; }
+    if (key === ']') { SYSTEM_CONTROL.speedUp(); return true; }
+    if (key === 'x') {
+      if (window.MATCH_LOGGER && typeof MATCH_LOGGER.exportJSON === 'function') MATCH_LOGGER.exportJSON();
+      showHudMsg('📥 Đã xuất log JSON', 1500);
+      return true;
+    }
+    if (key === 'k') {
+      const show = togglePanel('ranking-panel');
+      DEBUG_STATE.panels.leaderboard = show;
+      if (show && typeof window.showRankingPanel === 'function') window.showRankingPanel();
+      return true;
+    }
+    if (key === 'm') {
+      const show = togglePanel('dm-panel');
+      DEBUG_STATE.panels.decisionMatrix = show;
+      if (show && typeof window.showDecisionMatrix === 'function') window.showDecisionMatrix();
+      return true;
+    }
+    if (key === 't') {
+      const show = togglePanel('tm-panel');
+      DEBUG_STATE.panels.transitionMatrix = show;
+      if (show && typeof window.showTransitionMatrix === 'function') window.showTransitionMatrix();
+      return true;
+    }
+    if (key === 'u' && !e.altKey) {
+      const show = togglePanel('utility-panel');
+      DEBUG_STATE.panels.utility = show;
+      if (show && typeof window.showUtilityPanel === 'function') window.showUtilityPanel();
+      return true;
+    }
+    if (key === 'y' && !e.altKey) {
+      const show = togglePanel('mm-panel');
+      DEBUG_STATE.panels.minimax = show;
+      if (show && typeof window.showMinimaxPanel === 'function') window.showMinimaxPanel();
+      return true;
+    }
+    if (key === 'p') { toggleProbabilityPanel(); return true; }
+
+    // Simulation reset (xung đột với R skill push: dùng Alt+R cho reset simulation)
+    if (key === 'r' && e.altKey) { SYSTEM_CONTROL.resetSimulation(); return true; }
+
+    // Gameplay compatibility remap:
+    // Space giờ dành cho pause theo chuẩn report => đặt bẫy chuyển sang Z.
+    if (key === 'z') { requestPlaceTrap(GS.myIdx); return true; }
+    // Kỹ năng push đổi sang V để không xung đột Alt+R reset simulation.
+    if (key === 'v') { requestUseSkill('push'); return true; }
+
+    // Algorithm overlays
+    // Các phím xung đột WASD dùng Alt+key để không phá điều khiển di chuyển.
+    if (key === 'd' && e.altKey) { if (typeof window.showDFSOverlay === 'function') window.showDFSOverlay(); return true; }
+    if (key === 'b') { if (typeof window.showBFSOverlay === 'function') window.showBFSOverlay(); return true; }
+    if (key === 'a' && e.altKey) { if (typeof window.showAStarOverlay === 'function') window.showAStarOverlay(); return true; }
+    if (key === 'j') { if (typeof window.showDijkstraOverlay === 'function') window.showDijkstraOverlay(); return true; }
+    if (key === 's' && e.altKey) { if (typeof window.showCSPOverlay === 'function') window.showCSPOverlay(); return true; }
+    if (key === 'g') { toggleGraphColoring(); return true; }
+    if (key === 'c') { toggleChokeOverlay(); return true; }
+    if (key === 'i') { toggleInfluenceOverlay(); return true; }
+    if (key === 'u' && e.altKey) { const show = togglePanel('utility-panel'); if (show && window.showUtilityPanel) window.showUtilityPanel(); return true; }
+    if (key === 'y' && e.altKey) { const show = togglePanel('mm-panel'); if (show && window.showMinimaxPanel) window.showMinimaxPanel(); return true; }
+
+    return false;
+  }
+
+  // Capture-phase router để ưu tiên map phím thống nhất và ngăn listener cũ xử lý lặp.
+  document.addEventListener('keydown', function(e){
+    if (['INPUT','TEXTAREA'].includes(e.target?.tagName)) return;
+    const key = e.key === 'Tab' ? 'tab' : e.key;
+    const consumed = toggleByFinalKey(key, e);
+    if (!consumed) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+  }, true);
+
+  // Đồng bộ hint trạng thái khi bật debug/overlay.
+  if (typeof updateAlgoHints === 'function') {
+    const _origUpdateAlgoHints = updateAlgoHints;
+    window.updateAlgoHints = function(...args){
+      const r = _origUpdateAlgoHints.apply(this, args);
+      if (typeof window.renderProbabilityPanel === 'function') {
+        const p = document.getElementById('prob-panel');
+        if (p && p.style.display !== 'none') window.renderProbabilityPanel();
+      }
+      return r;
+    };
+  }
+
+  // Export nhanh snapshot debug state cho báo cáo.
+  window.exportDebugSnapshot = function(){
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      debugState: window.DEBUG_STATE,
+      hierarchy: window.SYSTEM_HIERARCHY,
+      sim: { paused: SYSTEM_CONTROL.paused, speed: SYSTEM_CONTROL.speed },
+      rankingTop10: window.RANKING_SYSTEM?.topN?.(10) || [],
+      loggerStats: window.MATCH_LOGGER?.stats?.() || {},
+      transitionPairs: window.TRANSITION_MATRIX?.data?.size || 0,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `mazeDuel_debug_snapshot_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showHudMsg('📦 Đã export debug snapshot', 1500);
+  };
+
+  console.info([
+    '[Phase 4] ✅ Unified control layer loaded',
+    'General: H Tab L O Space [ ] X K M T U Y P Alt+R(reset)',
+    'Algo: Alt+D BFS Alt+A J Alt+S G C I Alt+U Alt+Y',
+    'Gameplay remap: Z=trap, V=push-skill'
+  ].join('\n'));
+})();
 </script>
 </body>
 </html>
